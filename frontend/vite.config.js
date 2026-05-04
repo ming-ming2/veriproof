@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     // 백엔드 Spring 서버로 API 요청을 프록시 (개발 시 CORS 우회)
     proxy: {
-      '/api': 'http://localhost:8080',
+      '/api': 'http://localhost:8081',
     },
   },
 })

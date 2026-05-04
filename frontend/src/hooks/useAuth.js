@@ -12,13 +12,12 @@ export function useAuth() {
     setLoading(true);
     setError('');
     try {
-      const { data } = await loginApi(formData);
-      // 토큰과 사용자 정보를 localStorage에 저장
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
+      const { data: res } = await loginApi(formData);
+      localStorage.setItem('token', res.data.token);
+      localStorage.setItem('user', JSON.stringify(res.data.professor));
       navigate('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.message || '로그인에 실패했습니다.');
+      setError(err.response?.data?.error?.message || '로그인에 실패했습니다.');
     } finally {
       setLoading(false);
     }
@@ -29,10 +28,9 @@ export function useAuth() {
     setError('');
     try {
       await signupApi(formData);
-      // 가입 성공 후 로그인 페이지로 이동
       navigate('/login', { state: { signupSuccess: true } });
     } catch (err) {
-      setError(err.response?.data?.message || '회원가입에 실패했습니다.');
+      setError(err.response?.data?.error?.message || '회원가입에 실패했습니다.');
     } finally {
       setLoading(false);
     }
