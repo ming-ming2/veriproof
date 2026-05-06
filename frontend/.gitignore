@@ -42,3 +42,7 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+#md files
+FEATURES.md
+product-backlog.md

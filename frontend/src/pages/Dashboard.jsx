@@ -29,7 +29,13 @@ export default function Dashboard() {
 
   // 기존 HEAD에 있던 유저 정보 로직 살림
   const user = JSON.parse(localStorage.getItem("user") || "{}");
-  const userName = user.name ? `${user.name} 교수` : "홍길동 교수"; // 이름이 없으면 홍길동으로 대체
+  const userName = user.name ? `${user.name} 교수` : "교수";
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    navigate("/login");
+  };
 
   useEffect(() => {
     // TODO: API 연동 시 교체
@@ -60,7 +66,7 @@ export default function Dashboard() {
         <span style={styles.navTitle}>시험 플랫폼</span>
         <div style={styles.navRight}>
           <span style={styles.navUser}>{userName}</span>
-          <button style={styles.logoutBtn}>로그아웃</button>
+          <button style={styles.logoutBtn} onClick={handleLogout}>로그아웃</button>
         </div>
       </nav>
 

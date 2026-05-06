@@ -3,6 +3,8 @@ import Home from './pages/Home';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
+import ExamCreate from './pages/ExamCreate';
+import ExamDetail from './pages/ExamDetail';
 
 // 로그인된 사용자만 접근 가능한 라우트 보호
 function PrivateRoute({ children }) {
@@ -22,6 +24,22 @@ export default function App() {
           element={
             <PrivateRoute>
               <Dashboard />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/exam/create"
+          element={
+            <PrivateRoute>
+              <ExamCreate />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/exam/:id"
+          element={
+            <PrivateRoute>
+              <ExamDetail />
             </PrivateRoute>
           }
         />

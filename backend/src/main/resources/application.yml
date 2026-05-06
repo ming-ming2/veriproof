@@ -1,0 +1,38 @@
+server:
+  port: 8081 # API Base URL 포트 맞춤, Oracle이 사용중이여서 김경태PC환경에서는 8081포트로 진행
+
+spring:
+  # 데이터베이스 연결 설정
+  datasource:
+    url: jdbc:postgresql://localhost:5432/veriproof # 로컬 DB 환경에 맞게 수정 필요
+    username: postgres
+    password: oracle
+    driver-class-name: org.postgresql.Driver
+
+  # JPA / Hibernate 설정
+  jpa:
+    hibernate:
+      # Flyway를 사용하므로 ddl-auto는 validate로 설정하여 스키마 임의 변경 방지
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        default_batch_fetch_size: 100
+
+  # Flyway 마이그레이션 설정
+  flyway:
+    enabled: true
+    locations: classpath:db/migration # V1__sprint1_schema.sql 파일이 위치할 경로
+    baseline-on-migrate: true
+
+# JWT 시크릿 키 설정 (임의의 문자열, 실제 운영 시 환경 변수로 주입)
+jwt:
+  secret: c3ByaW5nLWJvb3Qtc2VjdXJpdHktand0LXR1dG9yaWFsLXNlY3JldC1rZXktYmFzZTY0LWVuY29kaW5n
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    display-request-duration: true
