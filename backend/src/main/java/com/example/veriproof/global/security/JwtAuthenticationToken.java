@@ -16,7 +16,7 @@ public class JwtAuthenticationToken extends AbstractAuthenticationToken {
         super(Collections.emptyList());
         this.professorId = professorId;
         this.username = username;
-        setAuthenticated(true); // 이 객체가 만들어졌다는 건 이미 토큰 검증이 끝났다는 의미
+        setAuthenticated(true);
     }
 
     @Override

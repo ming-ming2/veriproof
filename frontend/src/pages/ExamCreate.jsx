@@ -4,10 +4,16 @@ import { useNavigate } from "react-router-dom";
 // 빈 문항 생성 헬퍼
 const createEmptyQuestion = () => ({
   id: Date.now() + Math.random(),
-  type: "subjective",
+  type: "subjective",                  // 'subjective' | 'objective' (UI 표기)
   content: "",
   score: "",
-  options: ["", "", "", ""],
+  correctAnswer: "",                   // 주관식 참조용 정답 (백로그 1-4)
+  options: [
+    { body: "", isCorrect: false },
+    { body: "", isCorrect: false },
+    { body: "", isCorrect: false },
+    { body: "", isCorrect: false },
+  ],
   imageFile: null,
   imagePreview: null,
 });
@@ -19,7 +25,6 @@ function ImageUploader({ imagePreview, onImageChange, onImageRemove }) {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
 
-  // 파일 처리 공통 함수
   const handleFile = useCallback(
     (file) => {
       if (!file || !file.type.startsWith("image/")) return;
@@ -30,7 +35,6 @@ function ImageUploader({ imagePreview, onImageChange, onImageRemove }) {
     [onImageChange]
   );
 
-  // 드래그 이벤트
   const handleDragOver = (e) => {
     e.preventDefault();
     setIsDragging(true);
@@ -46,13 +50,11 @@ function ImageUploader({ imagePreview, onImageChange, onImageRemove }) {
     handleFile(file);
   };
 
-  // 파일 선택 버튼
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     handleFile(file);
   };
 
-  // 이미지가 이미 있으면 미리보기
   if (imagePreview) {
     return (
       <div style={styles.previewWrap}>
@@ -64,7 +66,6 @@ function ImageUploader({ imagePreview, onImageChange, onImageRemove }) {
     );
   }
 
-  // 업로드 영역
   return (
     <div
       onDragOver={handleDragOver}
@@ -96,28 +97,40 @@ function ImageUploader({ imagePreview, onImageChange, onImageRemove }) {
 }
 
 // ─────────────────────────────────────────────
-// 문항 카드 컴포넌트
+// 문항 카드
 // ─────────────────────────────────────────────
 function QuestionCard({ question, index, onChange, onDelete, isOnly }) {
   const update = (field, value) => onChange({ ...question, [field]: value });
 
-  // 선택지 업데이트
-  const updateOption = (optIdx, value) => {
-    const newOptions = [...question.options];
-    newOptions[optIdx] = value;
+  // 선택지 본문 변경
+  const updateOptionBody = (optIdx, body) => {
+    const newOptions = question.options.map((opt, i) =>
+      i === optIdx ? { ...opt, body } : opt
+    );
     update("options", newOptions);
   };
 
-  // 선택지 추가/삭제
-  const addOption = () => update("options", [...question.options, ""]);
+  // 선택지 정답 토글
+  const toggleOptionCorrect = (optIdx) => {
+    const newOptions = question.options.map((opt, i) =>
+      i === optIdx ? { ...opt, isCorrect: !opt.isCorrect } : opt
+    );
+    update("options", newOptions);
+  };
+
+  // 선택지 추가/삭제 (최소 2개 유지)
+  const addOption = () =>
+    update("options", [...question.options, { body: "", isCorrect: false }]);
   const removeOption = (optIdx) => {
-    if (question.options.length <= 2) return; // 최소 2개
-    update("options", question.options.filter((_, i) => i !== optIdx));
+    if (question.options.length <= 2) return;
+    update(
+      "options",
+      question.options.filter((_, i) => i !== optIdx)
+    );
   };
 
   return (
     <div style={styles.questionCard}>
-      {/* 헤더: 문항 번호 + 유형 토글 + 삭제 */}
       <div style={styles.qHeader}>
         <span style={styles.qNumber}>문항 {index + 1}</span>
         <div style={styles.qHeaderRight}>
@@ -154,7 +167,6 @@ function QuestionCard({ question, index, onChange, onDelete, isOnly }) {
         </div>
       </div>
 
-      {/* 문항 본문 입력 */}
       <textarea
         placeholder="문항 내용을 입력하세요"
         value={question.content}
@@ -163,18 +175,39 @@ function QuestionCard({ question, index, onChange, onDelete, isOnly }) {
         style={styles.textarea}
       />
 
-      {/* 객관식일 때만 선택지 표시 */}
+      {/* 주관식: 참조용 정답 입력 */}
+      {question.type === "subjective" && (
+        <div style={styles.fieldGroup}>
+          <label style={styles.smallLabel}>참조용 정답 (수동 채점 시 참고)</label>
+          <input
+            type="text"
+            placeholder="정답 또는 모범답안"
+            value={question.correctAnswer}
+            onChange={(e) => update("correctAnswer", e.target.value)}
+            style={styles.input}
+          />
+        </div>
+      )}
+
+      {/* 객관식: 선택지 + 정답 체크박스 */}
       {question.type === "objective" && (
         <div style={styles.optionsSection}>
-          <div style={styles.optionsLabel}>선택지</div>
+          <div style={styles.optionsLabel}>선택지 (정답을 1개 이상 체크)</div>
           {question.options.map((opt, optIdx) => (
             <div key={optIdx} style={styles.optionRow}>
+              <input
+                type="checkbox"
+                checked={opt.isCorrect}
+                onChange={() => toggleOptionCorrect(optIdx)}
+                style={styles.optionCheckbox}
+                title="정답 여부"
+              />
               <span style={styles.optionNum}>{optIdx + 1}</span>
               <input
                 type="text"
                 placeholder={`선택지 ${optIdx + 1}`}
-                value={opt}
-                onChange={(e) => updateOption(optIdx, e.target.value)}
+                value={opt.body}
+                onChange={(e) => updateOptionBody(optIdx, e.target.value)}
                 style={styles.optionInput}
               />
               {question.options.length > 2 && (
@@ -190,13 +223,12 @@ function QuestionCard({ question, index, onChange, onDelete, isOnly }) {
         </div>
       )}
 
-      {/* 배점 */}
       <div style={styles.qFooter}>
         <div style={styles.scoreWrap}>
           <label style={styles.scoreLabel}>배점</label>
           <input
             type="number"
-            min="0"
+            min="1"
             placeholder="0"
             value={question.score}
             onChange={(e) => update("score", e.target.value)}
@@ -205,7 +237,6 @@ function QuestionCard({ question, index, onChange, onDelete, isOnly }) {
         </div>
       </div>
 
-      {/* 이미지 업로드 */}
       <ImageUploader
         imagePreview={question.imagePreview}
         onImageChange={(file, preview) =>
@@ -220,7 +251,8 @@ function QuestionCard({ question, index, onChange, onDelete, isOnly }) {
 }
 
 // ─────────────────────────────────────────────
-// 메인: 시험 개설 페이지
+// 메인: 시험 개설 페이지 (Step 1 — 시험 정보 + 문항)
+// 다음 단계인 응시자 명단 등록은 /exam/create/roster 에서 진행
 // ─────────────────────────────────────────────
 export default function ExamCreate() {
   const navigate = useNavigate();
@@ -228,7 +260,7 @@ export default function ExamCreate() {
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [questions, setQuestions] = useState([createEmptyQuestion()]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [validationError, setValidationError] = useState("");
 
   // 문항 CRUD
   const addQuestion = () => setQuestions([...questions, createEmptyQuestion()]);
@@ -236,70 +268,67 @@ export default function ExamCreate() {
   const updateQuestion = (id, updated) =>
     setQuestions(questions.map((q) => (q.id === id ? updated : q)));
 
-  // 시험 개설 제출
-  const handleSubmit = async (e) => {
+  // 다음 단계로 이동 (페이로드는 RosterRegister에서 명단까지 합쳐 최종 전송)
+  const handleNext = (e) => {
     e.preventDefault();
-    if (!title.trim()) return alert("시험명을 입력하세요.");
-    if (!startAt) return alert("시작 시각을 입력하세요.");
-    if (!endAt) return alert("종료 시각을 입력하세요.");
+    setValidationError("");
 
-    setIsSubmitting(true);
+    if (!title.trim()) return setValidationError("시험명을 입력하세요.");
+    if (!startAt) return setValidationError("시작 시각을 입력하세요.");
+    if (!endAt) return setValidationError("종료 시각을 입력하세요.");
+    if (new Date(endAt) <= new Date(startAt))
+      return setValidationError("종료 시각은 시작 시각보다 이후여야 합니다.");
 
-    // ──────────────────────────────────────────
-    // TODO: API 연동 시 아래 주석 해제하고 mock 제거
-    // ──────────────────────────────────────────
-    // const formData = new FormData();
-    // formData.append("title", title);
-    // formData.append("startAt", startAt);
-    // formData.append("endAt", endAt);
-    // formData.append("questions", JSON.stringify(
-    //   questions.map((q) => ({
-    //     type: q.type,
-    //     content: q.content,
-    //     score: Number(q.score),
-    //     options: q.type === "objective" ? q.options : undefined,
-    //   }))
-    // ));
-    // questions.forEach((q, i) => {
-    //   if (q.imageFile) formData.append(`image_${i}`, q.imageFile);
-    // });
-    // const res = await api.post("/exams", formData);
-    // navigate(`/exam/${res.data.id}`);
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      if (!q.content.trim())
+        return setValidationError(`문항 ${i + 1}의 본문을 입력하세요.`);
+      if (!q.score || Number(q.score) < 1)
+        return setValidationError(`문항 ${i + 1}의 배점은 1점 이상이어야 합니다.`);
+      if (q.type === "objective") {
+        const filledChoices = q.options.filter((opt) => opt.body.trim());
+        if (filledChoices.length < 2)
+          return setValidationError(`문항 ${i + 1}의 선택지를 2개 이상 작성하세요.`);
+        if (!q.options.some((opt) => opt.body.trim() && opt.isCorrect))
+          return setValidationError(`문항 ${i + 1}의 정답을 1개 이상 체크하세요.`);
+      }
+    }
 
-    // mock: 1초 후 성공 (API 연동 시 이 블록 교체)
-    setTimeout(() => {
-      setIsSubmitting(false);
-
-      // 개설한 시험 데이터를 state로 만들어서 상세 페이지로 전달
-      const newExam = {
-        id: Date.now(),
-        title,
-        startAt,
-        endAt,
-        code: Math.random().toString(36).substring(2, 8).toUpperCase(),
-        applicantCount: 0,
-        questions: questions.map((q) => ({
-          type: q.type,
-          content: q.content,
-          score: Number(q.score),
-          options: q.type === "objective" ? q.options : [],
-          imagePreview: q.imagePreview,
-        })),
-      };
-
-      navigate(`/exam/${newExam.id}`, { state: { exam: newExam } });
-    }, 1000);
+    // 다음 페이지로 시험 정보 + 문항 전달
+    // (이미지 File 객체는 navigate state에만 담김 — 새로고침 시 유실되지만
+    //  RosterRegister에서 가드로 처리)
+    navigate("/exam/create/roster", {
+      state: {
+        examMeta: {
+          title: title.trim(),
+          startAt,
+          endAt,
+        },
+        questions,
+      },
+    });
   };
 
   return (
     <div style={styles.page}>
-      {/* 네비게이션 */}
       <nav style={styles.nav}>
         <span style={styles.navTitle}>시험 플랫폼</span>
-        <span style={styles.navUser}>홍길동 교수</span>
+        <button
+          style={styles.cancelBtn}
+          onClick={() => navigate("/dashboard")}
+          type="button"
+        >
+          목록으로
+        </button>
       </nav>
 
-      <form onSubmit={handleSubmit} style={styles.content}>
+      <form onSubmit={handleNext} style={styles.content}>
+        <div style={styles.stepIndicator}>
+          <span style={styles.stepActive}>1. 시험 정보 · 문항</span>
+          <span style={styles.stepArrow}>›</span>
+          <span style={styles.stepInactive}>2. 응시자 명단</span>
+        </div>
+
         <h1 style={styles.pageTitle}>새 시험 만들기</h1>
 
         {/* 시험 기본 정보 */}
@@ -308,7 +337,7 @@ export default function ExamCreate() {
             <label style={styles.label}>시험명</label>
             <input
               type="text"
-              placeholder="예: 2025 중간고사"
+              placeholder="예: 2026 봄학기 중간고사"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               style={styles.input}
@@ -338,7 +367,7 @@ export default function ExamCreate() {
 
         <hr style={styles.divider} />
 
-        {/* 문항 목록 */}
+        {/* 문항 */}
         <section style={styles.section}>
           <div style={styles.sectionHeader}>
             <h2 style={styles.sectionTitle}>문항 ({questions.length}개)</h2>
@@ -363,17 +392,18 @@ export default function ExamCreate() {
           </button>
         </section>
 
-        {/* 하단 액션 */}
+        {validationError && <p style={styles.errorMsg}>{validationError}</p>}
+
         <div style={styles.actions}>
-          <button type="button" style={styles.cancelBtn} onClick={() => navigate("/dashboard")}>
+          <button
+            type="button"
+            style={styles.cancelBtn}
+            onClick={() => navigate("/dashboard")}
+          >
             취소
           </button>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            style={{ ...styles.submitBtn, opacity: isSubmitting ? 0.6 : 1 }}
-          >
-            {isSubmitting ? "개설 중..." : "시험 개설"}
+          <button type="submit" style={styles.submitBtn}>
+            응시자 명단 등록 →
           </button>
         </div>
       </form>
@@ -381,9 +411,6 @@ export default function ExamCreate() {
   );
 }
 
-// ─────────────────────────────────────────────
-// 스타일 (인라인 — 팀 CSS 방식 확정 전 임시)
-// ─────────────────────────────────────────────
 const styles = {
   page: {
     minHeight: "100vh",
@@ -399,10 +426,27 @@ const styles = {
     background: "#fff",
   },
   navTitle: { fontSize: 16, fontWeight: 500 },
-  navUser: { fontSize: 13, color: "#888" },
 
-  content: { maxWidth: 640, margin: "0 auto", padding: "32px 20px" },
+  content: { maxWidth: 720, margin: "0 auto", padding: "32px 20px" },
   pageTitle: { fontSize: 20, fontWeight: 500, marginBottom: 24 },
+
+  stepIndicator: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    fontSize: 12,
+    marginBottom: 12,
+  },
+  stepActive: {
+    color: "#185FA5",
+    fontWeight: 600,
+  },
+  stepInactive: {
+    color: "#aaa",
+  },
+  stepArrow: {
+    color: "#ccc",
+  },
 
   section: { marginBottom: 24 },
   sectionHeader: {
@@ -416,6 +460,7 @@ const styles = {
 
   fieldGroup: { marginBottom: 12 },
   label: { display: "block", fontSize: 13, fontWeight: 500, color: "#555", marginBottom: 4 },
+  smallLabel: { display: "block", fontSize: 12, color: "#888", marginBottom: 4 },
   input: {
     width: "100%",
     padding: "8px 12px",
@@ -482,6 +527,7 @@ const styles = {
   optionsSection: { marginBottom: 10 },
   optionsLabel: { fontSize: 12, color: "#888", marginBottom: 6 },
   optionRow: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 },
+  optionCheckbox: { width: 16, height: 16, cursor: "pointer", accentColor: "#185FA5" },
   optionNum: { fontSize: 12, fontWeight: 500, color: "#aaa", minWidth: 16, textAlign: "center" },
   optionInput: {
     flex: 1,
@@ -508,7 +554,6 @@ const styles = {
     marginTop: 2,
   },
 
-  // 배점
   qFooter: { display: "flex", alignItems: "center", gap: 12, marginBottom: 10 },
   scoreWrap: { display: "flex", alignItems: "center", gap: 6 },
   scoreLabel: { fontSize: 12, color: "#888" },
@@ -553,7 +598,16 @@ const styles = {
     cursor: "pointer",
   },
 
-  // 버튼들
+  errorMsg: {
+    fontSize: 13,
+    color: "#c0392b",
+    background: "#fdecea",
+    border: "1px solid #f5c2bd",
+    borderRadius: 8,
+    padding: "10px 14px",
+    margin: "12px 0",
+  },
+
   addQBtn: {
     width: "100%",
     padding: 12,

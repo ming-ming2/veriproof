@@ -4,6 +4,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import ExamCreate from './pages/ExamCreate';
+import RosterRegister from './pages/RosterRegister';
 import ExamDetail from './pages/ExamDetail';
 
 // 로그인된 사용자만 접근 가능한 라우트 보호
@@ -32,6 +33,14 @@ export default function App() {
           element={
             <PrivateRoute>
               <ExamCreate />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/exam/create/roster"
+          element={
+            <PrivateRoute>
+              <RosterRegister />
             </PrivateRoute>
           }
         />
