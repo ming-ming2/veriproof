@@ -9,4 +9,6 @@ import java.util.List;
 @Repository
 public interface ExamSessionRepository extends JpaRepository<ExamSession, Long> {
     List<ExamSession> findAllByExamId(Long examId);
+
+    int countByExamId(Long examId);
 }

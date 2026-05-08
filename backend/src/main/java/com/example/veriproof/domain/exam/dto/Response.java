@@ -8,7 +8,6 @@ public class Response{
         Long id,
         String examCode,
         String proctorLink,
-        String qrCodeUrl,
         Integer questionCount
     ) {}
 
@@ -18,8 +17,9 @@ public class Response{
             String examCode,
             OffsetDateTime startsAt,
             OffsetDateTime endsAt,
-            int questionCount,           // 문항 수
-            int registeredStudentCount   // 등록된 응시자 수
+            int questionCount,
+            int rosterCount,    // 사전 등록된 명단 인원
+            int takerCount      // 실제 응시(세션 생성) 학생 수
     ) {}
 
     public record ImageUploadResponse(
@@ -36,8 +36,8 @@ public class Response{
             OffsetDateTime startsAt,
             OffsetDateTime endsAt,
             String proctorLink,
-            String qrCodeUrl,
             List<QuestionDetailDto> questions,
+            List<RosterDetailDto> roster,        // 사전 응시 명단 (백로그 1-5 요구)
             List<SessionDetailDto> sessions
     ) {}
 
@@ -62,6 +62,12 @@ public class Response{
             String body,
             Boolean isCorrect,    // 객관식 정답 여부
             Integer displayOrder
+    ) {}
+
+    public record RosterDetailDto(
+            Long id,
+            String studentNumber,
+            String studentName
     ) {}
 
     public record SessionDetailDto(

@@ -10,7 +10,7 @@ description = 'VeriProof Backend Project'
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(17)
+        languageVersion = JavaLanguageVersion.of(23)
     }
 }
 
@@ -39,9 +39,6 @@ dependencies {
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0'
-    // QRCode
-    implementation 'com.google.zxing:core:3.5.3'
-    implementation 'com.google.zxing:javase:3.5.3'
 
     // 5. Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'

@@ -7,6 +7,8 @@ import com.example.veriproof.domain.exam.dto.Response;
 import com.example.veriproof.domain.exam.entity.*;
 import com.example.veriproof.domain.exam.repository.ExamRepository;
 import com.example.veriproof.domain.exam.repository.ExamSessionRepository;
+import com.example.veriproof.global.exception.CustomException;
+import com.example.veriproof.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,17 +32,36 @@ public class ExamService {
     public Response.ExamCreateResponse createExam(Long professorId, Request request) {
         // 1. 교수 엔티티 조회
         Professor professor = professorRepository.findById(professorId)
-                .orElseThrow(() -> new IllegalArgumentException("Professor not found"));
+                .orElseThrow(() -> new CustomException(ErrorCode.INVALID_CREDENTIALS));
 
-        // 2. 시간 유효성 검증 (ends_at > starts_at)[cite: 1]
+        // 2. 시간 유효성 검증 (ends_at > starts_at)
         if (!request.endsAt().isAfter(request.startsAt())) {
-            throw new IllegalArgumentException("종료 시간은 시작 시간보다 이후여야 합니다.");
+            throw new CustomException(ErrorCode.EXAM_TIME_INVALID);
         }
 
-        // 3. 고유한 6자리 시험 코드 생성
+        // 3. 응시 명단 0명 검증 (백로그 1-4 검증 포인트)
+        if (request.roster() == null || request.roster().isEmpty()) {
+            throw new CustomException(ErrorCode.ROSTER_EMPTY);
+        }
+
+        // 4. 객관식 문항의 정답/선택지 개수 검증 (백로그 1-4 검증 포인트)
+        for (Request.QuestionDto qDto : request.questions()) {
+            if ("MULTIPLE_CHOICE".equals(qDto.questionType())) {
+                if (qDto.choices() == null || qDto.choices().size() < 2) {
+                    throw new CustomException(ErrorCode.MULTIPLE_CHOICE_NO_CHOICES);
+                }
+                boolean hasCorrect = qDto.choices().stream()
+                        .anyMatch(c -> Boolean.TRUE.equals(c.isCorrect()));
+                if (!hasCorrect) {
+                    throw new CustomException(ErrorCode.MULTIPLE_CHOICE_NO_CORRECT);
+                }
+            }
+        }
+
+        // 5. 고유한 6자리 시험 코드 생성
         String examCode = generateUniqueExamCode();
 
-        // 4. Exam 엔티티 생성
+        // 6. Exam 엔티티 생성
         Exam exam = Exam.builder()
                 .professor(professor)
                 .title(request.title())
@@ -49,7 +70,7 @@ public class ExamService {
                 .endsAt(request.endsAt())
                 .build();
 
-        // 5. 문항(Question) 및 선택지(Choice) 추가 (Entity의 편의 메서드 활용)
+        // 7. 문항(Question) 및 선택지(Choice) 추가 (Entity의 편의 메서드 활용)
         for (Request.QuestionDto qDto : request.questions()) {
             Question question = Question.builder()
                     .questionType(QuestionType.valueOf(qDto.questionType()))
@@ -66,35 +87,31 @@ public class ExamService {
                             .isCorrect(cDto.isCorrect())
                             .displayOrder(cDto.displayOrder())
                             .build();
-                    question.addChoice(choice); // Question 내부에 구현된 연관관계 편의 메서드
+                    question.addChoice(choice);
                 }
             }
-            exam.addQuestion(question); // Exam 내부에 구현된 연관관계 편의 메서드
+            exam.addQuestion(question);
         }
 
-        // 6. 사전 응시 명단(Roster) 추가
-        if (request.roster() != null) {
-            for (Request.RosterDto rDto : request.roster()) {
-                ExamRoster roster = ExamRoster.builder()
-                        .studentNumber(rDto.studentNumber())
-                        .studentName(rDto.studentName())
-                        .build();
-                exam.addRoster(roster);
-            }
+        // 8. 사전 응시 명단(Roster) 추가
+        for (Request.RosterDto rDto : request.roster()) {
+            ExamRoster roster = ExamRoster.builder()
+                    .studentNumber(rDto.studentNumber())
+                    .studentName(rDto.studentName())
+                    .build();
+            exam.addRoster(roster);
         }
 
-        // 7. DB 저장 (Cascade 설정에 의해 하위 연관 엔티티도 함께 저장됨)
+        // 9. DB 저장 (Cascade 설정에 의해 하위 연관 엔티티도 함께 저장됨)
         Exam savedExam = examRepository.save(exam);
 
-        // 8. API 명세서에 맞춘 응답 반환[cite: 2]
-        String qrCodeUrl = "/api/v1/exams/" + savedExam.getId() + "/qr";
+        // 10. 응답 반환 (QR 제거됨 - 시험 코드만 사용)
         String proctorLink = "https://veriproof.com/proctor/" + savedExam.getProctorToken();
 
         return new Response.ExamCreateResponse(
                 savedExam.getId(),
                 savedExam.getExamCode(),
                 proctorLink,
-                qrCodeUrl,
                 request.questions().size()
         );
     }
@@ -121,26 +138,26 @@ public class ExamService {
                         exam.getExamCode(),
                         exam.getStartsAt(),
                         exam.getEndsAt(),
-                        exam.getQuestions().size(), // @OneToMany 관계 활용
-                        exam.getRosters().size()    // @OneToMany 관계 활용
+                        exam.getQuestions().size(),
+                        exam.getRosters().size(),
+                        examSessionRepository.countByExamId(exam.getId())
                 ))
                 .collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
     public Response.ExamDetailResponse getExamDetail(Long professorId, Long examId) {
-        // 1. 시험 조회 (예외 발생 시 API 명세에 따라 404 EXAM_NOT_FOUND에 매핑될 수 있도록 처리)
+        // 1. 시험 조회
         Exam exam = examRepository.findById(examId)
-                .orElseThrow(() -> new IllegalArgumentException("EXAM_NOT_FOUND"));
+                .orElseThrow(() -> new CustomException(ErrorCode.EXAM_NOT_FOUND));
 
-        // 2. 권한 검증: 본인이 만든 시험인지 확인 (403 FORBIDDEN)
+        // 2. 권한 검증: 본인이 만든 시험인지 확인
         if (!exam.getProfessor().getId().equals(professorId)) {
-            throw new SecurityException("FORBIDDEN");
+            throw new CustomException(ErrorCode.FORBIDDEN);
         }
 
-        // 3. 반환할 URL 조립
+        // 3. 반환할 URL 조립 (QR 제거됨)
         String proctorLink = "https://veriproof.com/proctor/" + exam.getProctorToken();
-        String qrCodeUrl = "/api/v1/exams/" + exam.getId() + "/qr";
 
         // 4. 문항(Questions) DTO 변환
         List<Response.QuestionDetailDto> questionDtos = exam.getQuestions().stream()
@@ -160,7 +177,16 @@ public class ExamService {
                 ))
                 .collect(Collectors.toList());
 
-        // 5. 응시자 세션(Sessions) DTO 변환
+        // 5. 응시 명단(Roster) DTO 변환 (백로그 1-5 요구사항)
+        List<Response.RosterDetailDto> rosterDtos = exam.getRosters().stream()
+                .map(r -> new Response.RosterDetailDto(
+                        r.getId(),
+                        r.getStudentNumber(),
+                        r.getStudentName()
+                ))
+                .collect(Collectors.toList());
+
+        // 6. 응시자 세션(Sessions) DTO 변환
         List<Response.SessionDetailDto> sessionDtos = examSessionRepository.findAllByExamId(examId).stream()
                 .map(s -> new Response.SessionDetailDto(
                         s.getSessionUuid().toString(),
@@ -173,10 +199,10 @@ public class ExamService {
                 ))
                 .collect(Collectors.toList());
 
-        // 6. 최종 응답 객체 생성
+        // 7. 최종 응답 객체 생성
         return new Response.ExamDetailResponse(
                 exam.getId(), exam.getTitle(), exam.getExamCode(), exam.getStartsAt(), exam.getEndsAt(),
-                proctorLink, qrCodeUrl, questionDtos, sessionDtos
+                proctorLink, questionDtos, rosterDtos, sessionDtos
         );
     }
 }
