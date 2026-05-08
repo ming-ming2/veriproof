@@ -1,11 +1,14 @@
 package com.example.veriproof.infra.storage;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -57,6 +60,22 @@ public class FileStorageService {
             Files.deleteIfExists(targetLocation);
         } catch (IOException e) {
             // 삭제 실패 시 에러 로그 기록 (추후 배치로 쓰레기 파일 정리 가능)
+        }
+    }
+
+    public Resource loadFileAsResource(String fileName) {
+        try {
+            Path filePath = this.fileStorageLocation.resolve(fileName).normalize();
+            Resource resource = new UrlResource(filePath.toUri());
+
+            if (resource.exists()) {
+                return resource;
+            } else {
+                // 커스텀 예외가 없다면 RuntimeException 혹은 적절한 예외 처리
+                throw new RuntimeException("파일을 찾을 수 없습니다: " + fileName);
+            }
+        } catch (MalformedURLException ex) {
+            throw new RuntimeException("파일 경로가 잘못되었습니다: " + fileName, ex);
         }
     }
 }
