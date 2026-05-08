@@ -33,7 +33,22 @@ public enum ErrorCode {
     QUESTION_NOT_IN_EXAM(HttpStatus.BAD_REQUEST, "QUESTION_NOT_IN_EXAM", "해당 문항이 시험에 속해있지 않습니다."),
 
     // 시험 - 수정/삭제
-    EXAM_HAS_SESSIONS(HttpStatus.CONFLICT, "EXAM_HAS_SESSIONS", "이미 응시자가 존재하는 시험은 수정/삭제할 수 없습니다.");
+    EXAM_HAS_SESSIONS(HttpStatus.CONFLICT, "EXAM_HAS_SESSIONS", "이미 응시자가 존재하는 시험은 수정/삭제할 수 없습니다."),
+
+    // 학생 응시 - 시험 코드 / 시간
+    EXAM_CODE_NOT_FOUND(HttpStatus.NOT_FOUND, "EXAM_CODE_NOT_FOUND", "잘못된 시험 코드입니다."),
+    EXAM_NOT_STARTED(HttpStatus.BAD_REQUEST, "EXAM_NOT_STARTED", "시험이 아직 시작되지 않았습니다."),
+    EXAM_ENDED(HttpStatus.BAD_REQUEST, "EXAM_ENDED", "시험이 종료되었습니다."),
+
+    // 학생 응시 - 명단/세션
+    STUDENT_NOT_IN_ROSTER(HttpStatus.FORBIDDEN, "STUDENT_NOT_IN_ROSTER", "응시 권한이 없습니다."),
+    CONCURRENT_SESSION(HttpStatus.CONFLICT, "CONCURRENT_SESSION", "이미 다른 기기에서 응시 중입니다."),
+    SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "세션이 존재하지 않거나 만료되었습니다."),
+    SESSION_ALREADY_SUBMITTED(HttpStatus.CONFLICT, "SESSION_ALREADY_SUBMITTED", "이미 제출된 시험입니다."),
+    INVALID_SESSION_TOKEN(HttpStatus.UNAUTHORIZED, "INVALID_SESSION_TOKEN", "세션 토큰이 유효하지 않습니다."),
+
+    // 학생 응시 - 인프라 장애 (Redis fail-close)
+    LOCK_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "LOCK_UNAVAILABLE", "일시적인 장애로 응시를 시작할 수 없습니다.");
 
     private final HttpStatus status;
     private final String code;

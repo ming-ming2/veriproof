@@ -29,6 +29,9 @@ dependencies {
     implementation 'org.flywaydb:flyway-core' // DB 마이그레이션
     implementation 'org.flywaydb:flyway-database-postgresql'
 
+    // 2-1. Redis (응시 활성 lock + 답안 초안 저장)
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+
     // 3. Security & JWT
     implementation 'org.springframework.boot:spring-boot-starter-security' // BCrypt 및 인증
     implementation 'io.jsonwebtoken:jjwt-api:0.12.5' // JWT 인터페이스
