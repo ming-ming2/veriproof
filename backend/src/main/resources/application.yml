@@ -9,6 +9,14 @@ spring:
     password: oracle
     driver-class-name: org.postgresql.Driver
 
+  # Redis (응시 활성 lock + 답안 초안 저장)
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2s
+      connect-timeout: 2s
+
   # JPA / Hibernate 설정
   jpa:
     hibernate:

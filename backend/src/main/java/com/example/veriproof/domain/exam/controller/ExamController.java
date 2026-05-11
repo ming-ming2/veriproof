@@ -80,4 +80,27 @@ public class ExamController {
         // API 명세서에 따른 200 응답 처리[cite: 1]
         return ResponseEntity.ok(ApiResponse.success(response));
     }
+
+    @Operation(summary = "시험 수정",
+            description = "시험 정보, 문항, 응시 명단을 일괄 갱신합니다. 이미 응시자가 1명이라도 있는 경우 수정할 수 없습니다.")
+    @PutMapping("/{examId}")
+    public ResponseEntity<ApiResponse<Response.ExamDetailResponse>> updateExam(
+            @AuthenticationPrincipal Long professorId,
+            @PathVariable Long examId,
+            @RequestBody @Valid Request request) {
+
+        Response.ExamDetailResponse response = examService.updateExam(professorId, examId, request);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @Operation(summary = "시험 삭제",
+            description = "시험과 모든 하위 데이터(문항/선택지/이미지/명단)를 삭제합니다. 이미 응시자가 1명이라도 있는 경우 삭제할 수 없습니다.")
+    @DeleteMapping("/{examId}")
+    public ResponseEntity<Void> deleteExam(
+            @AuthenticationPrincipal Long professorId,
+            @PathVariable Long examId) {
+
+        examService.deleteExam(professorId, examId);
+        return ResponseEntity.noContent().build();
+    }
 }

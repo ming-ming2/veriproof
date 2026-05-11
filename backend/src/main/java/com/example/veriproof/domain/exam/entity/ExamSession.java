@@ -2,6 +2,7 @@ package com.example.veriproof.domain.exam.entity;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -11,13 +12,19 @@ import java.util.UUID;
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Table(name = "exam_session")
+@Table(name = "exam_session",
+        uniqueConstraints = @UniqueConstraint(name = "session_unique_per_student",
+                columnNames = {"exam_id", "student_number"}))
 public class ExamSession {
+
+    public static final String STATUS_IN_PROGRESS = "IN_PROGRESS";
+    public static final String STATUS_SUBMITTED = "SUBMITTED";
+    public static final String STATUS_EXPIRED = "EXPIRED";
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "session_uuid", nullable = false, unique = true)
+    @Column(name = "session_uuid", nullable = false, unique = true, updatable = false)
     private UUID sessionUuid;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -36,9 +43,37 @@ public class ExamSession {
     @Column(name = "total_score")
     private Integer totalScore;
 
-    @Column(name = "started_at")
+    @Column(name = "started_at", nullable = false, updatable = false)
     private OffsetDateTime startedAt;
 
     @Column(name = "submitted_at")
     private OffsetDateTime submittedAt;
+
+    @Builder
+    public ExamSession(Exam exam, String studentNumber, String studentName) {
+        this.sessionUuid = UUID.randomUUID();
+        this.exam = exam;
+        this.studentNumber = studentNumber;
+        this.studentName = studentName;
+        this.status = STATUS_IN_PROGRESS;
+        this.totalScore = 0;
+        this.startedAt = OffsetDateTime.now();
+    }
+
+    /**
+     * 학생이 답안을 제출한 시점에 호출. 상태 전이 + 채점 결과 반영.
+     */
+    public void submit(int totalScore) {
+        this.status = STATUS_SUBMITTED;
+        this.submittedAt = OffsetDateTime.now();
+        this.totalScore = totalScore;
+    }
+
+    public boolean isInProgress() {
+        return STATUS_IN_PROGRESS.equals(this.status);
+    }
+
+    public boolean isSubmitted() {
+        return STATUS_SUBMITTED.equals(this.status);
+    }
 }

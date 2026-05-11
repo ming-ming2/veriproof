@@ -66,4 +66,10 @@ public class Exam extends BaseTimeEntity {
         this.rosters.add(roster);
         roster.setExam(this);
     }
+
+    public void update(String title, OffsetDateTime startsAt, OffsetDateTime endsAt) {
+        this.title = title;
+        this.startsAt = startsAt;
+        this.endsAt = endsAt;
+    }
 }

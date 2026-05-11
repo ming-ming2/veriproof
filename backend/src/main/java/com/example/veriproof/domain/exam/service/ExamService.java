@@ -9,10 +9,12 @@ import com.example.veriproof.domain.exam.repository.ExamRepository;
 import com.example.veriproof.domain.exam.repository.ExamSessionRepository;
 import com.example.veriproof.global.exception.CustomException;
 import com.example.veriproof.global.exception.ErrorCode;
+import com.example.veriproof.infra.storage.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.security.SecureRandom;
 import java.util.stream.Collectors;
@@ -24,6 +26,7 @@ public class ExamService {
     private final ExamRepository examRepository;
     private final ProfessorRepository professorRepository;
     private final ExamSessionRepository examSessionRepository;
+    private final FileStorageService fileStorageService;
     // 난수 생성을 위해 암호학적으로 안전한 SecureRandom 사용
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private static final String ALPHANUMERIC = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -34,29 +37,8 @@ public class ExamService {
         Professor professor = professorRepository.findById(professorId)
                 .orElseThrow(() -> new CustomException(ErrorCode.INVALID_CREDENTIALS));
 
-        // 2. 시간 유효성 검증 (ends_at > starts_at)
-        if (!request.endsAt().isAfter(request.startsAt())) {
-            throw new CustomException(ErrorCode.EXAM_TIME_INVALID);
-        }
-
-        // 3. 응시 명단 0명 검증 (백로그 1-4 검증 포인트)
-        if (request.roster() == null || request.roster().isEmpty()) {
-            throw new CustomException(ErrorCode.ROSTER_EMPTY);
-        }
-
-        // 4. 객관식 문항의 정답/선택지 개수 검증 (백로그 1-4 검증 포인트)
-        for (Request.QuestionDto qDto : request.questions()) {
-            if ("MULTIPLE_CHOICE".equals(qDto.questionType())) {
-                if (qDto.choices() == null || qDto.choices().size() < 2) {
-                    throw new CustomException(ErrorCode.MULTIPLE_CHOICE_NO_CHOICES);
-                }
-                boolean hasCorrect = qDto.choices().stream()
-                        .anyMatch(c -> Boolean.TRUE.equals(c.isCorrect()));
-                if (!hasCorrect) {
-                    throw new CustomException(ErrorCode.MULTIPLE_CHOICE_NO_CORRECT);
-                }
-            }
-        }
+        // 2~4. 공통 유효성 검증
+        validateExamRequest(request);
 
         // 5. 고유한 6자리 시험 코드 생성
         String examCode = generateUniqueExamCode();
@@ -204,5 +186,130 @@ public class ExamService {
                 exam.getId(), exam.getTitle(), exam.getExamCode(), exam.getStartsAt(), exam.getEndsAt(),
                 proctorLink, questionDtos, rosterDtos, sessionDtos
         );
+    }
+
+    @Transactional
+    public Response.ExamDetailResponse updateExam(Long professorId, Long examId, Request request) {
+        Exam exam = examRepository.findById(examId)
+                .orElseThrow(() -> new CustomException(ErrorCode.EXAM_NOT_FOUND));
+
+        if (!exam.getProfessor().getId().equals(professorId)) {
+            throw new CustomException(ErrorCode.FORBIDDEN);
+        }
+
+        // 응시 세션이 1건이라도 존재하면 수정 불가 (응시 데이터 무결성 보호)
+        if (examSessionRepository.countByExamId(examId) > 0) {
+            throw new CustomException(ErrorCode.EXAM_HAS_SESSIONS);
+        }
+
+        validateExamRequest(request);
+
+        // 기존 문항에 첨부된 이미지 파일 경로 수집 (orphanRemoval로 DB 레코드는 삭제되지만,
+        // 디스크의 물리 파일은 별도로 정리해야 함)
+        List<String> obsoleteImagePaths = new ArrayList<>();
+        for (Question q : exam.getQuestions()) {
+            for (QuestionImage img : q.getImages()) {
+                obsoleteImagePaths.add(img.getFilePath());
+            }
+        }
+
+        // 기본 정보 갱신
+        exam.update(request.title(), request.startsAt(), request.endsAt());
+
+        // 문항/명단 전체 교체 (orphanRemoval=true)
+        exam.getQuestions().clear();
+        exam.getRosters().clear();
+
+        for (Request.QuestionDto qDto : request.questions()) {
+            Question question = Question.builder()
+                    .questionType(QuestionType.valueOf(qDto.questionType()))
+                    .body(qDto.body())
+                    .correctAnswer(qDto.correctAnswer())
+                    .points(qDto.points())
+                    .displayOrder(qDto.displayOrder())
+                    .build();
+
+            if ("MULTIPLE_CHOICE".equals(qDto.questionType()) && qDto.choices() != null) {
+                for (Request.ChoiceDto cDto : qDto.choices()) {
+                    QuestionChoice choice = QuestionChoice.builder()
+                            .body(cDto.body())
+                            .isCorrect(cDto.isCorrect())
+                            .displayOrder(cDto.displayOrder())
+                            .build();
+                    question.addChoice(choice);
+                }
+            }
+            exam.addQuestion(question);
+        }
+
+        for (Request.RosterDto rDto : request.roster()) {
+            ExamRoster roster = ExamRoster.builder()
+                    .studentNumber(rDto.studentNumber())
+                    .studentName(rDto.studentName())
+                    .build();
+            exam.addRoster(roster);
+        }
+
+        // flush 후 더 이상 참조되지 않는 이미지 파일을 디스크에서 제거
+        examRepository.flush();
+        for (String path : obsoleteImagePaths) {
+            fileStorageService.deleteFile(path);
+        }
+
+        return getExamDetail(professorId, examId);
+    }
+
+    @Transactional
+    public void deleteExam(Long professorId, Long examId) {
+        Exam exam = examRepository.findById(examId)
+                .orElseThrow(() -> new CustomException(ErrorCode.EXAM_NOT_FOUND));
+
+        if (!exam.getProfessor().getId().equals(professorId)) {
+            throw new CustomException(ErrorCode.FORBIDDEN);
+        }
+
+        // ExamSession은 Exam에 cascade되지 않으므로 응시자 존재 시 FK로 인해 삭제 실패함
+        // → 명시적으로 차단하여 의도치 않은 응시 기록 손실을 방지
+        if (examSessionRepository.countByExamId(examId) > 0) {
+            throw new CustomException(ErrorCode.EXAM_HAS_SESSIONS);
+        }
+
+        // 디스크에 남는 물리 이미지 파일 경로를 먼저 수집
+        List<String> imagePaths = new ArrayList<>();
+        for (Question q : exam.getQuestions()) {
+            for (QuestionImage img : q.getImages()) {
+                imagePaths.add(img.getFilePath());
+            }
+        }
+
+        examRepository.delete(exam);
+        examRepository.flush();
+
+        for (String path : imagePaths) {
+            fileStorageService.deleteFile(path);
+        }
+    }
+
+    private void validateExamRequest(Request request) {
+        if (!request.endsAt().isAfter(request.startsAt())) {
+            throw new CustomException(ErrorCode.EXAM_TIME_INVALID);
+        }
+
+        if (request.roster() == null || request.roster().isEmpty()) {
+            throw new CustomException(ErrorCode.ROSTER_EMPTY);
+        }
+
+        for (Request.QuestionDto qDto : request.questions()) {
+            if ("MULTIPLE_CHOICE".equals(qDto.questionType())) {
+                if (qDto.choices() == null || qDto.choices().size() < 2) {
+                    throw new CustomException(ErrorCode.MULTIPLE_CHOICE_NO_CHOICES);
+                }
+                boolean hasCorrect = qDto.choices().stream()
+                        .anyMatch(c -> Boolean.TRUE.equals(c.isCorrect()));
+                if (!hasCorrect) {
+                    throw new CustomException(ErrorCode.MULTIPLE_CHOICE_NO_CORRECT);
+                }
+            }
+        }
     }
 }
