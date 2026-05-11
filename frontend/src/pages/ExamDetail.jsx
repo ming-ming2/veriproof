@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { getExamDetail } from "../api/exam";
+import { getExamDetail, deleteExam } from "../api/exam";
 
 export default function ExamDetail() {
   const navigate = useNavigate();
@@ -10,6 +10,8 @@ export default function ExamDetail() {
   const [error, setError] = useState("");
   const [codeCopied, setCodeCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +69,26 @@ export default function ExamDetail() {
     }
   };
 
+  // 시험 수정 페이지로 이동
+  const handleEdit = () => {
+    navigate(`/exam/${examId}/edit`);
+  };
+
+  // 시험 삭제 처리
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      await deleteExam(examId);
+      navigate("/dashboard");
+    } catch (err) {
+      alert(
+        err.response?.data?.error?.message || "시험 삭제에 실패했습니다."
+      );
+      setIsDeleting(false);
+      setShowDeleteModal(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={styles.page}>
@@ -99,17 +121,17 @@ export default function ExamDetail() {
     );
   }
 
-  // 코드를 3글자씩 나눠서 표시 (A1B2C3 → A1B 2C3)
-  const displayCode = exam.examCode.match(/.{1,3}/g)?.join(" ") || exam.examCode;
+  const displayCode =
+    exam.examCode.match(/.{1,3}/g)?.join(" ") || exam.examCode;
+
+  // 응시 시작 여부 (수정/삭제 비활성화 조건)
+  const hasStartedSessions = exam.sessions && exam.sessions.length > 0;
 
   return (
     <div style={styles.page}>
       <nav style={styles.nav}>
         <span style={styles.navTitle}>시험 플랫폼</span>
-        <button
-          style={styles.backBtn}
-          onClick={() => navigate("/dashboard")}
-        >
+        <button style={styles.backBtn} onClick={() => navigate("/dashboard")}>
           목록으로
         </button>
       </nav>
@@ -119,6 +141,39 @@ export default function ExamDetail() {
           <div>
             <p style={styles.breadcrumb}>{exam.title}</p>
             <h1 style={styles.pageTitle}>시험 상세</h1>
+          </div>
+          {/* 수정 / 삭제 버튼 */}
+          <div style={styles.actionBtns}>
+            <button
+              style={{
+                ...styles.editBtn,
+                ...(hasStartedSessions ? styles.btnDisabled : {}),
+              }}
+              onClick={handleEdit}
+              disabled={hasStartedSessions}
+              title={
+                hasStartedSessions
+                  ? "응시가 시작된 시험은 수정할 수 없습니다"
+                  : ""
+              }
+            >
+              수정
+            </button>
+            <button
+              style={{
+                ...styles.deleteBtn,
+                ...(hasStartedSessions ? styles.btnDisabled : {}),
+              }}
+              onClick={() => setShowDeleteModal(true)}
+              disabled={hasStartedSessions}
+              title={
+                hasStartedSessions
+                  ? "응시가 시작된 시험은 삭제할 수 없습니다"
+                  : ""
+              }
+            >
+              삭제
+            </button>
           </div>
         </div>
 
@@ -166,7 +221,7 @@ export default function ExamDetail() {
           </button>
         </div>
 
-        {/* 문항 목록 (정답 데이터 포함, 교수만 조회) */}
+        {/* 문항 목록 */}
         <div style={styles.sectionLabel}>문항 목록</div>
         <div style={styles.questionList}>
           {exam.questions
@@ -219,7 +274,9 @@ export default function ExamDetail() {
                 {q.questionType === "SUBJECTIVE" && q.correctAnswer && (
                   <div style={styles.correctAnswerBox}>
                     <span style={styles.correctAnswerLabel}>참조용 정답</span>
-                    <span style={styles.correctAnswerText}>{q.correctAnswer}</span>
+                    <span style={styles.correctAnswerText}>
+                      {q.correctAnswer}
+                    </span>
                   </div>
                 )}
               </div>
@@ -227,7 +284,9 @@ export default function ExamDetail() {
         </div>
 
         {/* 응시 명단 */}
-        <div style={styles.sectionLabel}>응시 명단 ({exam.roster.length}명)</div>
+        <div style={styles.sectionLabel}>
+          응시 명단 ({exam.roster.length}명)
+        </div>
         <div style={styles.tableWrap}>
           <table style={styles.table}>
             <thead>
@@ -247,7 +306,7 @@ export default function ExamDetail() {
           </table>
         </div>
 
-        {/* 응시 학생 (실제로 응시한 세션) */}
+        {/* 응시 학생 */}
         <div style={styles.sectionLabel}>
           응시 학생 ({exam.sessions.length}명)
         </div>
@@ -282,6 +341,39 @@ export default function ExamDetail() {
           <div style={styles.emptySessionBox}>아직 응시한 학생이 없습니다.</div>
         )}
       </div>
+
+      {/* 삭제 확인 모달 */}
+      {showDeleteModal && (
+        <div
+          style={styles.modalBackdrop}
+          onClick={() => !isDeleting && setShowDeleteModal(false)}
+        >
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <h3 style={styles.modalTitle}>시험을 삭제하시겠습니까?</h3>
+            <p style={styles.modalText}>
+              <strong>{exam.title}</strong> 시험을 삭제합니다.
+              <br />
+              삭제된 시험은 복구할 수 없습니다.
+            </p>
+            <div style={styles.modalActions}>
+              <button
+                style={styles.modalCancelBtn}
+                onClick={() => setShowDeleteModal(false)}
+                disabled={isDeleting}
+              >
+                취소
+              </button>
+              <button
+                style={styles.modalDeleteBtn}
+                onClick={handleDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? "삭제 중..." : "삭제"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -290,7 +382,8 @@ const styles = {
   page: {
     minHeight: "100vh",
     background: "#f7f7f8",
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontFamily:
+      '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
   },
   nav: {
     display: "flex",
@@ -313,6 +406,33 @@ const styles = {
   },
   breadcrumb: { fontSize: 13, color: "#888", margin: "0 0 2px" },
   pageTitle: { fontSize: 20, fontWeight: 500, margin: 0 },
+
+  // 수정/삭제 버튼
+  actionBtns: { display: "flex", gap: 8 },
+  editBtn: {
+    fontSize: 12,
+    padding: "6px 14px",
+    border: "1px solid #185FA5",
+    borderRadius: 6,
+    background: "#fff",
+    color: "#185FA5",
+    cursor: "pointer",
+    fontWeight: 500,
+  },
+  deleteBtn: {
+    fontSize: 12,
+    padding: "6px 14px",
+    border: "1px solid #e24b4a",
+    borderRadius: 6,
+    background: "#fff",
+    color: "#e24b4a",
+    cursor: "pointer",
+    fontWeight: 500,
+  },
+  btnDisabled: {
+    opacity: 0.4,
+    cursor: "not-allowed",
+  },
   backBtn: {
     fontSize: 12,
     padding: "6px 14px",
@@ -340,7 +460,6 @@ const styles = {
   statValue: { fontSize: 14, fontWeight: 500, color: "#333" },
   statValueBig: { fontSize: 22, fontWeight: 500, color: "#222" },
 
-  // 시험 코드
   sectionLabel: {
     fontSize: 13,
     fontWeight: 500,
@@ -395,7 +514,6 @@ const styles = {
     fontWeight: 500,
   },
 
-  // 문항 목록
   questionList: { display: "flex", flexDirection: "column", gap: 10 },
   questionItem: {
     background: "#fff",
@@ -409,7 +527,7 @@ const styles = {
     gap: 8,
     marginBottom: 8,
   },
-  questionItemNumber: { fontSize: 13, fontWeight: 600, color: "#333" },
+  questionItemNumber: { fontSize: 13, fontWeight: 500, color: "#333" },
   questionItemTypeBadge: {
     fontSize: 11,
     padding: "2px 8px",
@@ -432,12 +550,8 @@ const styles = {
     border: "1px solid #eee",
   },
   choiceList: { listStyle: "none", padding: 0, margin: 0 },
-  choiceItem: {
-    fontSize: 13,
-    color: "#555",
-    padding: "4px 0",
-  },
-  choiceItemCorrect: { color: "#185FA5", fontWeight: 600 },
+  choiceItem: { fontSize: 13, color: "#555", padding: "4px 0" },
+  choiceItemCorrect: { color: "#185FA5", fontWeight: 500 },
   correctAnswerBox: {
     marginTop: 6,
     padding: "8px 10px",
@@ -446,17 +560,9 @@ const styles = {
     display: "flex",
     gap: 8,
   },
-  correctAnswerLabel: {
-    fontSize: 11,
-    color: "#888",
-    fontWeight: 500,
-  },
-  correctAnswerText: {
-    fontSize: 12,
-    color: "#444",
-  },
+  correctAnswerLabel: { fontSize: 11, color: "#888", fontWeight: 500 },
+  correctAnswerText: { fontSize: 12, color: "#444" },
 
-  // 테이블
   tableWrap: {
     border: "1px solid #e5e5e5",
     borderRadius: 10,
@@ -495,7 +601,61 @@ const styles = {
     fontSize: 13,
     color: "#999",
   },
-
   emptyState: { textAlign: "center", padding: "60px 20px" },
   emptyText: { fontSize: 15, color: "#666", marginBottom: 16 },
+
+  // 모달
+  modalBackdrop: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0,0,0,0.45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000,
+  },
+  modal: {
+    background: "#fff",
+    borderRadius: 12,
+    padding: "24px 28px",
+    width: "90%",
+    maxWidth: 420,
+    boxShadow: "0 10px 40px rgba(0,0,0,0.15)",
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: 500,
+    margin: "0 0 8px",
+    color: "#222",
+  },
+  modalText: {
+    fontSize: 13,
+    color: "#666",
+    lineHeight: 1.6,
+    margin: "0 0 20px",
+  },
+  modalActions: { display: "flex", justifyContent: "flex-end", gap: 8 },
+  modalCancelBtn: {
+    fontSize: 13,
+    padding: "8px 18px",
+    border: "1px solid #ddd",
+    borderRadius: 8,
+    background: "#fff",
+    color: "#666",
+    cursor: "pointer",
+    fontWeight: 500,
+  },
+  modalDeleteBtn: {
+    fontSize: 13,
+    padding: "8px 18px",
+    border: "none",
+    borderRadius: 8,
+    background: "#e24b4a",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 500,
+  },
 };

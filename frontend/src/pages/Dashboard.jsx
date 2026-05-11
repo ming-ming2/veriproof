@@ -7,6 +7,7 @@ export default function Dashboard() {
   const [exams, setExams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const userName = user.name ? `${user.name} 교수` : "교수";
@@ -17,6 +18,19 @@ export default function Dashboard() {
     navigate("/login");
   };
 
+  // 메뉴 외부 클릭 시 닫기
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (!e.target.closest("[data-user-menu]")) {
+        setMenuOpen(false);
+      }
+    };
+    if (menuOpen) {
+      document.addEventListener("click", handleClickOutside);
+      return () => document.removeEventListener("click", handleClickOutside);
+    }
+  }, [menuOpen]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -25,7 +39,10 @@ export default function Dashboard() {
         if (!cancelled) setExams(res.data || []);
       } catch (err) {
         if (!cancelled) {
-          setError(err.response?.data?.error?.message || "시험 목록을 불러오지 못했습니다.");
+          setError(
+            err.response?.data?.error?.message ||
+              "시험 목록을 불러오지 못했습니다."
+          );
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -46,9 +63,40 @@ export default function Dashboard() {
     <div style={styles.page}>
       <nav style={styles.nav}>
         <span style={styles.navTitle}>시험 플랫폼</span>
-        <div style={styles.navRight}>
-          <span style={styles.navUser}>{userName}</span>
-          <button style={styles.logoutBtn} onClick={handleLogout}>로그아웃</button>
+
+        {/* 사용자 메뉴 (드롭다운) */}
+        <div style={styles.navRight} data-user-menu>
+          <button
+            style={styles.userBtn}
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuOpen(!menuOpen);
+            }}
+          >
+            <span style={styles.navUser}>{userName}</span>
+            <span style={styles.caret}>▾</span>
+          </button>
+
+          {menuOpen && (
+            <div style={styles.dropdown}>
+              <button
+                style={styles.dropdownItem}
+                onClick={() => {
+                  setMenuOpen(false);
+                  navigate("/profile");
+                }}
+              >
+                계정 설정
+              </button>
+              <div style={styles.dropdownDivider} />
+              <button
+                style={{ ...styles.dropdownItem, color: "#c0392b" }}
+                onClick={handleLogout}
+              >
+                로그아웃
+              </button>
+            </div>
+          )}
         </div>
       </nav>
 
@@ -64,7 +112,6 @@ export default function Dashboard() {
         </div>
 
         {loading && <div style={styles.loadingText}>불러오는 중...</div>}
-
         {!loading && error && <div style={styles.errorText}>{error}</div>}
 
         {!loading && !error && exams.length > 0 && (
@@ -165,16 +212,47 @@ const styles = {
     background: "#fff",
   },
   navTitle: { fontSize: 16, fontWeight: 500 },
-  navRight: { display: "flex", alignItems: "center", gap: 12 },
-  navUser: { fontSize: 13, color: "#888" },
-  logoutBtn: {
-    fontSize: 12,
+  navRight: { position: "relative" },
+  userBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
     padding: "5px 12px",
     border: "1px solid #ddd",
     borderRadius: 6,
     background: "#fff",
-    color: "#666",
     cursor: "pointer",
+  },
+  navUser: { fontSize: 13, color: "#444" },
+  caret: { fontSize: 10, color: "#888" },
+
+  // 드롭다운
+  dropdown: {
+    position: "absolute",
+    top: "calc(100% + 4px)",
+    right: 0,
+    background: "#fff",
+    border: "1px solid #e5e5e5",
+    borderRadius: 8,
+    boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+    minWidth: 140,
+    padding: "4px 0",
+    zIndex: 100,
+  },
+  dropdownItem: {
+    display: "block",
+    width: "100%",
+    padding: "8px 14px",
+    fontSize: 13,
+    color: "#444",
+    background: "transparent",
+    border: "none",
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  dropdownDivider: {
+    borderTop: "1px solid #f0f0f0",
+    margin: "4px 0",
   },
 
   content: { maxWidth: 920, margin: "0 auto", padding: "32px 20px" },
