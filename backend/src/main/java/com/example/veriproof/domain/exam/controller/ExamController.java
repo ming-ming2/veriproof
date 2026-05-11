@@ -3,6 +3,7 @@ package com.example.veriproof.domain.exam.controller;
 import com.example.veriproof.domain.exam.dto.Request;
 import com.example.veriproof.domain.exam.dto.Response;
 import com.example.veriproof.domain.exam.service.ExamService;
+import com.example.veriproof.domain.exam.service.GradingService;
 import com.example.veriproof.domain.exam.service.ImageUploadService;
 import com.example.veriproof.global.common.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -26,6 +27,7 @@ public class ExamController {
 
     private final ExamService examService;
     private final ImageUploadService imageUploadService;
+    private final GradingService gradingService;
 
     @Operation(summary = "시험 개설", description = "새로운 시험을 생성하고 6자리 코드 및 감독관 링크를 발급합니다.")
     @PostMapping
@@ -102,5 +104,18 @@ public class ExamController {
 
         examService.deleteExam(professorId, examId);
         return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "주관식 채점", description = "교수가 학생의 주관식 답안에 점수를 부여합니다.")
+    @PutMapping("/{examId}/sessions/{sessionId}/questions/{questionId}/grade")
+    public ResponseEntity<ApiResponse<Void>> gradeAnswer(
+            @AuthenticationPrincipal Long professorId,
+            @PathVariable Long sessionId,
+            @PathVariable Long questionId,
+            @RequestBody Request.GradingRequest request) {
+
+        gradingService.gradeSubjectiveAnswer(professorId, sessionId, questionId, request.earnedScore());
+
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

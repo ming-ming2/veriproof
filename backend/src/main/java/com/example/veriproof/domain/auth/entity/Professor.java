@@ -32,4 +32,13 @@ public class Professor extends BaseTimeEntity {
         this.name = name;
         this.affiliation = affiliation;
     }
+
+    public void updateProfile(String name, String affiliation) {
+        if (name != null) this.name = name;
+        if (affiliation != null) this.affiliation = affiliation;
+    }
+
+    public void updatePassword(String encodedPassword) {
+        this.passwordHash = encodedPassword;
+    }
 }

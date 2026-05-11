@@ -39,4 +39,10 @@ public record Request(
             @NotBlank String studentNumber,
             @NotBlank String studentName
     ) {}
+
+    public record GradingRequest(
+            @NotNull(message = "점수는 필수 입력 항목입니다.")
+            @Min(value = 0, message = "점수는 0점 이상이어야 합니다.")
+            Integer earnedScore
+    ) {}
 }

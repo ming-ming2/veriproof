@@ -15,6 +15,7 @@ public enum ErrorCode {
     // 인증
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "아이디 또는 비밀번호가 일치하지 않습니다."),
     USERNAME_ALREADY_EXISTS(HttpStatus.CONFLICT, "USERNAME_ALREADY_EXISTS", "이미 존재하는 아이디입니다."),
+    USER_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "해당 사용자를 찾을 수 없습니다."), // 탈퇴/조회 시 사용
 
     // 시험 - 조회
     EXAM_NOT_FOUND(HttpStatus.NOT_FOUND, "EXAM_NOT_FOUND", "존재하지 않는 시험입니다."),
@@ -46,6 +47,14 @@ public enum ErrorCode {
     SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "세션이 존재하지 않거나 만료되었습니다."),
     SESSION_ALREADY_SUBMITTED(HttpStatus.CONFLICT, "SESSION_ALREADY_SUBMITTED", "이미 제출된 시험입니다."),
     INVALID_SESSION_TOKEN(HttpStatus.UNAUTHORIZED, "INVALID_SESSION_TOKEN", "세션 토큰이 유효하지 않습니다."),
+
+    // 채점 답안 오류
+    ANSWER_NOT_FOUND(HttpStatus.NOT_FOUND, "ANSWER_NOT_FOUND", "해당 문항에 대한 학생의 답안을 찾을 수 없습니다."),
+    INVALID_SCORE(HttpStatus.BAD_REQUEST, "INVALID_SCORE", "부여할 점수가 문항의 최대 배점 범위를 벗어납니다."),
+
+    // 채점 및 답안 관련 에러
+    SESSION_NOT_SUBMITTED(HttpStatus.BAD_REQUEST, "SESSION_NOT_SUBMITTED", "아직 제출되지 않은 세션은 채점할 수 없습니다."),
+    NOT_SUBJECTIVE_QUESTION(HttpStatus.BAD_REQUEST, "NOT_SUBJECTIVE_QUESTION", "주관식 문항만 수동으로 채점할 수 있습니다."),
 
     // 학생 응시 - 인프라 장애 (Redis fail-close)
     LOCK_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "LOCK_UNAVAILABLE", "일시적인 장애로 응시를 시작할 수 없습니다.");

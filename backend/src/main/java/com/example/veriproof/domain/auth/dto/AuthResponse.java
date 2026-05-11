@@ -12,4 +12,10 @@ public class AuthResponse {
             String token,
             ProfessorResponse professor
     ) {}
+
+    public record ReadProfessorResponse(
+            String username,
+            String name,
+            String affiliation
+    ) {}
 }

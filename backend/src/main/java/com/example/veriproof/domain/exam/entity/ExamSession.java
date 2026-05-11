@@ -69,6 +69,11 @@ public class ExamSession {
         this.totalScore = totalScore;
     }
 
+    // 채점결과 변동 시, 총점 변동
+    public void updateTotalScore(int totalScore) {
+        this.totalScore = totalScore;
+    }
+
     public boolean isInProgress() {
         return STATUS_IN_PROGRESS.equals(this.status);
     }

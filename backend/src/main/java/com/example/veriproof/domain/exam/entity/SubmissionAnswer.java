@@ -70,4 +70,9 @@ public class SubmissionAnswer {
         this.selectedChoices = selectedChoices != null ? selectedChoices : new HashSet<>();
         this.submittedAt = OffsetDateTime.now();
     }
+
+    // 채점 결과 반영
+    public void updateScore(int score) {
+        this.earnedScore = score;
+    }
 }

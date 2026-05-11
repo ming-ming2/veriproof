@@ -31,4 +31,18 @@ public class AuthRequest {
             @NotBlank
             String password
     ) {}
+
+    public record UpdateProfileRequest(
+            @Size(max = 100)
+            String name,
+
+            @Size(max = 200)
+            String affiliation
+    ) {}
+
+    public record UpdatePwRequest(
+            @NotBlank
+            @Size(min = 8, max = 100, message = "비밀번호는 8자 이상이어야 합니다.")
+            String password
+    ) {}
 }
