@@ -121,7 +121,7 @@ export default function ProfileEdit() {
   const handleDeleteAccount = async () => {
     setIsDeleting(true);
     try {
-      await deleteAccount({ password: deletePassword });
+      await deleteAccount();
       localStorage.removeItem("token");
       localStorage.removeItem("user");
       navigate("/login");
@@ -172,9 +172,9 @@ export default function ProfileEdit() {
         <section style={styles.section}>
           <h2 style={styles.sectionTitle}>계정 정보</h2>
           <div style={styles.fieldGroup}>
-            <label style={styles.label}>이메일</label>
-            <div style={styles.readOnlyField}>{profile?.email || "-"}</div>
-            <p style={styles.helpText}>이메일은 변경할 수 없습니다.</p>
+            <label style={styles.label}>아이디</label>
+            <div style={styles.readOnlyField}>{profile?.username || "-"}</div>
+            <p style={styles.helpText}>아이디는 변경할 수 없습니다.</p>
           </div>
         </section>
 

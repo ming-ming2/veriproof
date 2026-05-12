@@ -22,7 +22,16 @@ export default function ExamEnterCode() {
       navigate('/exam/enter', { state: { exam: res.data, examCode: trimmed } });
     } catch (err) {
       const errCode = err.response?.data?.error?.code;
-      setError(errCode === 'EXAM_CODE_NOT_FOUND' ? '유효하지 않은 시험 코드입니다.' : '시험 코드 조회에 실패했습니다.');
+      const messages = {
+        EXAM_CODE_NOT_FOUND: '유효하지 않은 시험 코드입니다.',
+        EXAM_NOT_STARTED: '시험이 아직 시작되지 않았습니다.\n시작 시간 이후 다시 시도해주세요.',
+        EXAM_ENDED: '시험이 종료되었습니다.\n응시 가능한 시간이 지났습니다.',
+      };
+      const msg = messages[errCode] || '시험 코드 조회에 실패했습니다.';
+      setError(msg);
+      if (errCode === 'EXAM_NOT_STARTED' || errCode === 'EXAM_ENDED') {
+        alert(msg);
+      }
     } finally {
       setLoading(false);
     }

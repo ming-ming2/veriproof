@@ -61,12 +61,18 @@ export default function ExamEnterStudent() {
         EXAM_NOT_STARTED: `시험이 아직 시작되지 않았습니다 (시작 시간: ${formatDatetime(exam.startsAt)})`,
         EXAM_ENDED: '시험이 종료되었습니다.',
         STUDENT_NOT_IN_ROSTER: '응시 권한이 없습니다.',
-        CONCURRENT_SESSION: '이미 다른 기기에서 응시 중입니다.',
+        CONCURRENT_SESSION: '이미 다른 기기에서 응시 중입니다.\n약 30초 후 다시 시도해주세요.',
         SESSION_ALREADY_SUBMITTED: '이미 제출된 시험입니다.',
         EXAM_CODE_NOT_FOUND: '시험 코드를 찾을 수 없습니다.',
         LOCK_UNAVAILABLE: '현재 서버 상태가 불안정합니다. 잠시 후 다시 시도해주세요.',
       };
-      setError(messages[errCode] || '입장에 실패했습니다. 다시 시도해주세요.');
+      const msg = messages[errCode] || '입장에 실패했습니다. 다시 시도해주세요.';
+      setError(msg);
+      // 학생이 inline 메시지를 놓치지 않도록 critical 차단 사유는 알림창으로도 안내
+      const alertCodes = ['CONCURRENT_SESSION', 'SESSION_ALREADY_SUBMITTED', 'EXAM_ENDED', 'LOCK_UNAVAILABLE'];
+      if (alertCodes.includes(errCode)) {
+        alert(msg);
+      }
       setLoading(false);
     }
   };

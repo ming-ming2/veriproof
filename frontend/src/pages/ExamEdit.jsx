@@ -2,6 +2,12 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getExamDetail, updateExam } from "../api/exam";
 
+// datetime-local 입력값을 ISO-8601 (UTC)로 변환
+const toIsoWithOffset = (localDateTime) => {
+  if (!localDateTime) return null;
+  return new Date(localDateTime).toISOString();
+};
+
 // ─────────────────────────────────────────────
 // 이미지 업로드 컴포넌트
 // ─────────────────────────────────────────────
@@ -75,13 +81,22 @@ function ImageUploader({ imagePreview, onImageChange, onImageRemove }) {
 function QuestionCard({ question, index, onChange, onDelete, isOnly }) {
   const update = (field, value) => onChange({ ...question, [field]: value });
 
-  const updateOption = (optIdx, value) => {
-    const newOptions = [...question.options];
-    newOptions[optIdx] = value;
+  const updateOptionBody = (optIdx, body) => {
+    const newOptions = question.options.map((opt, i) =>
+      i === optIdx ? { ...opt, body } : opt
+    );
     update("options", newOptions);
   };
 
-  const addOption = () => update("options", [...question.options, ""]);
+  const toggleOptionCorrect = (optIdx) => {
+    const newOptions = question.options.map((opt, i) =>
+      i === optIdx ? { ...opt, isCorrect: !opt.isCorrect } : opt
+    );
+    update("options", newOptions);
+  };
+
+  const addOption = () =>
+    update("options", [...question.options, { body: "", isCorrect: false }]);
   const removeOption = (optIdx) => {
     if (question.options.length <= 2) return;
     update("options", question.options.filter((_, i) => i !== optIdx));
@@ -133,17 +148,39 @@ function QuestionCard({ question, index, onChange, onDelete, isOnly }) {
         style={styles.textarea}
       />
 
+      {/* 주관식: 참조용 정답 입력 */}
+      {question.type === "subjective" && (
+        <div style={styles.fieldGroup}>
+          <label style={styles.smallLabel}>참조용 정답 (수동 채점 시 참고)</label>
+          <input
+            type="text"
+            placeholder="정답 또는 모범답안"
+            value={question.correctAnswer}
+            onChange={(e) => update("correctAnswer", e.target.value)}
+            style={styles.input}
+          />
+        </div>
+      )}
+
+      {/* 객관식: 선택지 + 정답 체크박스 */}
       {question.type === "objective" && (
         <div style={styles.optionsSection}>
-          <div style={styles.optionsLabel}>선택지</div>
+          <div style={styles.optionsLabel}>선택지 (정답을 1개 이상 체크)</div>
           {question.options.map((opt, optIdx) => (
             <div key={optIdx} style={styles.optionRow}>
+              <input
+                type="checkbox"
+                checked={opt.isCorrect}
+                onChange={() => toggleOptionCorrect(optIdx)}
+                style={styles.optionCheckbox}
+                title="정답 여부"
+              />
               <span style={styles.optionNum}>{optIdx + 1}</span>
               <input
                 type="text"
                 placeholder={`선택지 ${optIdx + 1}`}
-                value={opt}
-                onChange={(e) => updateOption(optIdx, e.target.value)}
+                value={opt.body}
+                onChange={(e) => updateOptionBody(optIdx, e.target.value)}
                 style={styles.optionInput}
               />
               {question.options.length > 2 && (
@@ -309,15 +346,30 @@ export default function ExamEdit() {
         const formQuestions = exam.questions
           .slice()
           .sort((a, b) => a.displayOrder - b.displayOrder)
-          .map((q) => ({
-            id: q.id,
-            type: q.questionType === "MULTIPLE_CHOICE" ? "objective" : "subjective",
-            content: q.body || "",
-            score: q.points?.toString() || "",
-            options: q.choices?.map((c) => c.body) || ["", "", "", ""],
-            imageFile: null,
-            imagePreview: q.images?.[0]?.fileUrl || null,
-          }));
+          .map((q) => {
+            const isObjective = q.questionType === "MULTIPLE_CHOICE";
+            const options = isObjective
+              ? (q.choices || [])
+                  .slice()
+                  .sort((a, b) => a.displayOrder - b.displayOrder)
+                  .map((c) => ({ body: c.body, isCorrect: !!c.isCorrect }))
+              : [
+                  { body: "", isCorrect: false },
+                  { body: "", isCorrect: false },
+                  { body: "", isCorrect: false },
+                  { body: "", isCorrect: false },
+                ];
+            return {
+              id: q.id,
+              type: isObjective ? "objective" : "subjective",
+              content: q.body || "",
+              score: q.points?.toString() || "",
+              correctAnswer: q.correctAnswer || "",
+              options,
+              imageFile: null,
+              imagePreview: q.images?.[0]?.fileUrl || null,
+            };
+          });
         setQuestions(formQuestions.length > 0 ? formQuestions : [createEmpty()]);
 
         // 응시 명단 불러오기
@@ -343,7 +395,13 @@ export default function ExamEdit() {
     type: "subjective",
     content: "",
     score: "",
-    options: ["", "", "", ""],
+    correctAnswer: "",
+    options: [
+      { body: "", isCorrect: false },
+      { body: "", isCorrect: false },
+      { body: "", isCorrect: false },
+      { body: "", isCorrect: false },
+    ],
     imageFile: null,
     imagePreview: null,
   });
@@ -361,30 +419,78 @@ export default function ExamEdit() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    // 프론트 검증
+    if (!title.trim()) {
+      alert("시험명을 입력하세요.");
+      return;
+    }
+    if (!startAt || !endAt) {
+      alert("시작/종료 시각을 입력하세요.");
+      return;
+    }
+    if (new Date(endAt) <= new Date(startAt)) {
+      alert("종료 시각은 시작 시각보다 이후여야 합니다.");
+      return;
+    }
+    if (roster.length === 0) {
+      alert("응시 명단을 최소 1명 이상 등록하세요.");
+      return;
+    }
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      if (!q.content.trim()) {
+        alert(`문항 ${i + 1}의 본문을 입력하세요.`);
+        return;
+      }
+      if (!q.score || Number(q.score) < 1) {
+        alert(`문항 ${i + 1}의 배점은 1점 이상이어야 합니다.`);
+        return;
+      }
+      if (q.type === "objective") {
+        const filled = q.options.filter((opt) => opt.body.trim());
+        if (filled.length < 2) {
+          alert(`문항 ${i + 1}의 선택지를 2개 이상 작성하세요.`);
+          return;
+        }
+        if (!q.options.some((opt) => opt.body.trim() && opt.isCorrect)) {
+          alert(`문항 ${i + 1}의 정답을 1개 이상 체크하세요.`);
+          return;
+        }
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const payload = {
-        title,
-        startsAt: startAt,
-        endsAt: endAt,
-        questions: questions.map((q, idx) => ({
-          id: typeof q.id === "number" && q.id < 1e10 ? q.id : null,
-          questionType:
-            q.type === "objective" ? "MULTIPLE_CHOICE" : "SUBJECTIVE",
-          body: q.content,
-          points: Number(q.score) || 0,
-          displayOrder: idx,
-          choices:
-            q.type === "objective"
-              ? q.options.map((opt, i) => ({
-                  body: opt,
-                  displayOrder: i,
-                }))
-              : [],
-        })),
-        // 명단도 같이 보냄 (백엔드 명세 받으면 조정 필요)
+        title: title.trim(),
+        startsAt: toIsoWithOffset(startAt),
+        endsAt: toIsoWithOffset(endAt),
+        questions: questions.map((q, idx) => {
+          const questionType =
+            q.type === "objective" ? "MULTIPLE_CHOICE" : "SUBJECTIVE";
+          const choices =
+            questionType === "MULTIPLE_CHOICE"
+              ? q.options
+                  .filter((opt) => opt.body.trim())
+                  .map((opt, i) => ({
+                    body: opt.body.trim(),
+                    isCorrect: !!opt.isCorrect,
+                    displayOrder: i + 1,
+                  }))
+              : null;
+          return {
+            questionType,
+            body: q.content.trim(),
+            correctAnswer:
+              questionType === "SUBJECTIVE" && q.correctAnswer.trim()
+                ? q.correctAnswer.trim()
+                : null,
+            points: Number(q.score),
+            displayOrder: idx + 1,
+            choices,
+          };
+        }),
         roster: roster.map((r) => ({
-          id: r.id > 0 ? r.id : null, // 음수면 신규 추가된 항목
           studentNumber: r.studentNumber,
           studentName: r.studentName,
         })),
@@ -393,7 +499,10 @@ export default function ExamEdit() {
       await updateExam(examId, payload);
       navigate(`/exam/${examId}`);
     } catch (err) {
-      alert(err.response?.data?.error?.message || "시험 수정에 실패했습니다.");
+      const code = err.response?.data?.error?.code;
+      const message =
+        err.response?.data?.error?.message || "시험 수정에 실패했습니다.";
+      alert(code ? `[${code}] ${message}` : message);
       setIsSubmitting(false);
     }
   };
@@ -575,6 +684,7 @@ const styles = {
     color: "#555",
     marginBottom: 4,
   },
+  smallLabel: { display: "block", fontSize: 12, color: "#888", marginBottom: 4 },
   input: {
     width: "100%",
     padding: "8px 12px",
@@ -639,6 +749,7 @@ const styles = {
   optionsSection: { marginBottom: 10 },
   optionsLabel: { fontSize: 12, color: "#888", marginBottom: 6 },
   optionRow: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 },
+  optionCheckbox: { width: 16, height: 16, cursor: "pointer", accentColor: "#185FA5" },
   optionNum: {
     fontSize: 12,
     fontWeight: 500,

@@ -325,7 +325,19 @@ export default function ExamDetail() {
               </thead>
               <tbody>
                 {exam.sessions.map((s) => (
-                  <tr key={s.sessionUuid}>
+                  <tr
+                    key={s.sessionUuid}
+                    style={styles.sessionRow}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.background = "#fafafa")
+                    }
+                    onMouseLeave={(e) =>
+                      (e.currentTarget.style.background = "transparent")
+                    }
+                    onClick={() =>
+                      navigate(`/exam/${examId}/sessions/${s.id}`)
+                    }
+                  >
                     <td style={styles.tdMono}>{s.studentNumber}</td>
                     <td style={styles.td}>{s.studentName}</td>
                     <td style={styles.td}>{sessionStatusLabel(s.status)}</td>
@@ -592,6 +604,7 @@ const styles = {
     borderBottom: "1px solid #f0f0f0",
     fontFamily: '"SF Mono", "Fira Code", monospace',
   },
+  sessionRow: { cursor: "pointer", transition: "background 0.1s" },
   emptySessionBox: {
     textAlign: "center",
     padding: 24,

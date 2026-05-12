@@ -17,6 +17,9 @@ import ExamDone from './pages/ExamDone';
 // 11번 PR 내용 (프로필 수정)
 import ProfileEdit from './pages/ProfileEdit';  // ← 신규
 
+// 백로그 11 (주관식 채점) 페이지
+import SessionGrade from './pages/SessionGrade';
+
 // 로그인된 사용자만 접근 가능한 라우트 보호
 function PrivateRoute({ children }) {
     const token = localStorage.getItem('token');
@@ -68,6 +71,15 @@ export default function App() {
                     element={
                         <PrivateRoute>
                             <ExamDetail />
+                        </PrivateRoute>
+                    }
+                />
+                {/* 백로그 11: 학생 답안 상세 + 주관식 채점 */}
+                <Route
+                    path="/exam/:examId/sessions/:sessionId"
+                    element={
+                        <PrivateRoute>
+                            <SessionGrade />
                         </PrivateRoute>
                     }
                 />
