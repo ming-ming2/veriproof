@@ -53,6 +53,19 @@ public class SessionLockStore {
     }
 
     /**
+     * 누군가 lock을 점유 중인지 (TTL 안에 있는지) 확인. 점유자가 누구인지는 보지 않는다.
+     * {@code startSession}에서 동일 학번의 다른 기기가 응시 중인지 판정할 때 사용.
+     */
+    public boolean isHeld(Long examId, String studentNumber) {
+        try {
+            Boolean exists = redis.hasKey(key(examId, studentNumber));
+            return Boolean.TRUE.equals(exists);
+        } catch (DataAccessException e) {
+            throw new CustomException(ErrorCode.LOCK_UNAVAILABLE);
+        }
+    }
+
+    /**
      * 본인 sessionUuid가 lock을 들고 있을 때만 TTL을 갱신한다 (heartbeat).
      * 만료/소유자 변경 시 {@code false}.
      */

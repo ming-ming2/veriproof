@@ -106,6 +106,17 @@ public class ExamController {
         return ResponseEntity.noContent().build();
     }
 
+    @Operation(summary = "학생 답안 상세 조회",
+            description = "교수가 특정 학생 한 명의 모든 답안을 조회합니다. 주관식 채점 UI에서 사용 (백로그 11).")
+    @GetMapping("/{examId}/sessions/{sessionId}/answers")
+    public ResponseEntity<ApiResponse<Response.SessionAnswersResponse>> getSessionAnswers(
+            @AuthenticationPrincipal Long professorId,
+            @PathVariable Long examId,
+            @PathVariable Long sessionId) {
+        return ResponseEntity.ok(ApiResponse.success(
+                examService.getSessionAnswers(professorId, examId, sessionId)));
+    }
+
     @Operation(summary = "주관식 채점", description = "교수가 학생의 주관식 답안에 점수를 부여합니다.")
     @PutMapping("/{examId}/sessions/{sessionId}/questions/{questionId}/grade")
     public ResponseEntity<ApiResponse<Void>> gradeAnswer(

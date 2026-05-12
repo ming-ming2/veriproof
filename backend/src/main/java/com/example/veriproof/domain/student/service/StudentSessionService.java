@@ -47,11 +47,14 @@ public class StudentSessionService {
     /**
      * 6자리 시험 코드로 시험 메타 조회. (백로그 7)
      * 무인증 엔드포인트이므로 정답 등 민감 정보는 일체 미노출.
+     * 시간 검증을 lookup 단계에서 수행해 학생이 학번/이름까지 입력하기 전에 종료/미시작 시험을 차단한다.
      */
     @Transactional(readOnly = true)
     public StudentResponse.ExamLookupResponse lookupExam(String examCode) {
         Exam exam = examRepository.findByExamCode(examCode)
                 .orElseThrow(() -> new CustomException(ErrorCode.EXAM_CODE_NOT_FOUND));
+
+        validateExamWindow(exam);
 
         return new StudentResponse.ExamLookupResponse(
                 exam.getId(),
@@ -243,6 +246,17 @@ public class StudentSessionService {
         }
     }
 
+    /**
+     * 동일 학번의 ExamSession을 찾거나 생성한다. (백로그 20 동시 응시 차단의 핵심)
+     *
+     * 기존 row 발견 시:
+     *   - SUBMITTED → SESSION_ALREADY_SUBMITTED
+     *   - Redis lock이 살아있음 → 다른 기기가 응시 중 → CONCURRENT_SESSION (409)
+     *   - Redis lock이 만료(=30초 grace 지남) → sessionUuid를 새로 발급해서 이전 기기 토큰을 무효화한 뒤 재사용
+     *
+     * 이렇게 하면 동일 학번/이름으로 두 번째 기기가 진입해도 같은 sessionUuid를 받지 않으므로,
+     * 후속 {@link SessionLockStore#tryAcquire}의 "본인 sessionUuid면 통과" 분기를 우회하지 않는다.
+     */
     private ExamSession findOrCreateSession(Exam exam, StudentRequest.SessionStartRequest request) {
         return examSessionRepository
                 .findByExamIdAndStudentNumber(exam.getId(), request.studentNumber())
@@ -250,7 +264,10 @@ public class StudentSessionService {
                     if (existing.isSubmitted()) {
                         throw new CustomException(ErrorCode.SESSION_ALREADY_SUBMITTED);
                     }
-                    // EXPIRED 또는 IN_PROGRESS — 둘 다 IN_PROGRESS로 사용 (재접속)
+                    if (sessionLockStore.isHeld(exam.getId(), existing.getStudentNumber())) {
+                        throw new CustomException(ErrorCode.CONCURRENT_SESSION);
+                    }
+                    existing.regenerateSessionUuid();
                     return existing;
                 })
                 .orElseGet(() -> examSessionRepository.save(

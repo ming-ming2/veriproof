@@ -7,6 +7,7 @@ import com.example.veriproof.domain.exam.dto.Response;
 import com.example.veriproof.domain.exam.entity.*;
 import com.example.veriproof.domain.exam.repository.ExamRepository;
 import com.example.veriproof.domain.exam.repository.ExamSessionRepository;
+import com.example.veriproof.domain.exam.repository.SubmissionAnswerRepository;
 import com.example.veriproof.global.exception.CustomException;
 import com.example.veriproof.global.exception.ErrorCode;
 import com.example.veriproof.infra.storage.FileStorageService;
@@ -26,6 +27,7 @@ public class ExamService {
     private final ExamRepository examRepository;
     private final ProfessorRepository professorRepository;
     private final ExamSessionRepository examSessionRepository;
+    private final SubmissionAnswerRepository submissionAnswerRepository;
     private final FileStorageService fileStorageService;
     // 난수 생성을 위해 암호학적으로 안전한 SecureRandom 사용
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
@@ -171,6 +173,7 @@ public class ExamService {
         // 6. 응시자 세션(Sessions) DTO 변환
         List<Response.SessionDetailDto> sessionDtos = examSessionRepository.findAllByExamId(examId).stream()
                 .map(s -> new Response.SessionDetailDto(
+                        s.getId(),
                         s.getSessionUuid().toString(),
                         s.getStudentNumber(),
                         s.getStudentName(),
@@ -217,8 +220,12 @@ public class ExamService {
         exam.update(request.title(), request.startsAt(), request.endsAt());
 
         // 문항/명단 전체 교체 (orphanRemoval=true)
+        // clear 직후 flush로 DELETE를 먼저 강제 실행 — 이걸 안 하면
+        // 같은 트랜잭션 안에서 INSERT가 먼저 시도되어 UNIQUE(exam_id, display_order)
+        // 및 UNIQUE(exam_id, student_number) 제약이 충돌함.
         exam.getQuestions().clear();
         exam.getRosters().clear();
+        examRepository.flush();
 
         for (Request.QuestionDto qDto : request.questions()) {
             Question question = Question.builder()
@@ -288,6 +295,66 @@ public class ExamService {
         for (String path : imagePaths) {
             fileStorageService.deleteFile(path);
         }
+    }
+
+    /**
+     * 교수가 특정 학생의 답안을 모두 조회한다. (백로그 11 채점 UI에서 사용)
+     */
+    @Transactional(readOnly = true)
+    public Response.SessionAnswersResponse getSessionAnswers(Long professorId, Long examId, Long sessionId) {
+        Exam exam = examRepository.findById(examId)
+                .orElseThrow(() -> new CustomException(ErrorCode.EXAM_NOT_FOUND));
+
+        if (!exam.getProfessor().getId().equals(professorId)) {
+            throw new CustomException(ErrorCode.FORBIDDEN);
+        }
+
+        ExamSession session = examSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new CustomException(ErrorCode.SESSION_NOT_FOUND));
+
+        if (!session.getExam().getId().equals(examId)) {
+            throw new CustomException(ErrorCode.SESSION_NOT_FOUND);
+        }
+
+        List<SubmissionAnswer> rows = submissionAnswerRepository.findAllByExamSessionId(sessionId);
+
+        List<Response.AnswerDetailDto> answers = rows.stream()
+                .sorted((a, b) -> Integer.compare(
+                        a.getQuestion().getDisplayOrder(),
+                        b.getQuestion().getDisplayOrder()))
+                .map(a -> {
+                    Question q = a.getQuestion();
+                    List<Long> selectedIds = a.getSelectedChoices().stream()
+                            .map(QuestionChoice::getId)
+                            .sorted()
+                            .collect(Collectors.toList());
+                    List<Response.ChoiceDetailDto> choiceDtos = q.getChoices().stream()
+                            .sorted((c1, c2) -> Integer.compare(c1.getDisplayOrder(), c2.getDisplayOrder()))
+                            .map(c -> new Response.ChoiceDetailDto(c.getId(), c.getBody(), c.getIsCorrect(), c.getDisplayOrder()))
+                            .collect(Collectors.toList());
+                    return new Response.AnswerDetailDto(
+                            q.getId(),
+                            q.getQuestionType().name(),
+                            q.getBody(),
+                            q.getPoints(),
+                            q.getCorrectAnswer(),
+                            a.getEarnedScore(),
+                            a.getAnswerText(),
+                            selectedIds,
+                            choiceDtos
+                    );
+                })
+                .collect(Collectors.toList());
+
+        return new Response.SessionAnswersResponse(
+                session.getId(),
+                session.getStudentNumber(),
+                session.getStudentName(),
+                session.getStatus(),
+                session.getTotalScore(),
+                session.getSubmittedAt(),
+                answers
+        );
     }
 
     private void validateExamRequest(Request request) {
