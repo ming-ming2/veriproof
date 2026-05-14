@@ -98,7 +98,11 @@ public class AuthService {
         Professor professor = professorRepository.findById(professorId)
                 .orElseThrow(() -> new CustomException(ErrorCode.USER_NOT_FOUND));
 
-        String encodedPassword = passwordEncoder.encode(request.password());
+        if (!passwordEncoder.matches(request.currentPassword(), professor.getPasswordHash())) {
+            throw new CustomException(ErrorCode.INVALID_CREDENTIALS);
+        }
+
+        String encodedPassword = passwordEncoder.encode(request.newPassword());
         professor.updatePassword(encodedPassword);
     }
 }

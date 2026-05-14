@@ -25,8 +25,9 @@ axiosInstance.interceptors.response.use(
     const status = error.response?.status;
     const url = error.config?.url || '';
     const isAuthEndpoint = url.includes('/auth/login') || url.includes('/auth/signup');
+    const isStudentEndpoint = url.includes('/student/');
 
-    if (status === 401 && !isAuthEndpoint) {
+    if (status === 401 && !isAuthEndpoint && !isStudentEndpoint) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       if (window.location.pathname !== '/login') {

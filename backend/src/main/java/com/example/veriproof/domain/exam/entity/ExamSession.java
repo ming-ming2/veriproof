@@ -24,7 +24,7 @@ public class ExamSession {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "session_uuid", nullable = false, unique = true, updatable = false)
+    @Column(name = "session_uuid", nullable = false, unique = true)
     private UUID sessionUuid;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -58,6 +58,14 @@ public class ExamSession {
         this.status = STATUS_IN_PROGRESS;
         this.totalScore = 0;
         this.startedAt = OffsetDateTime.now();
+    }
+
+    /**
+     * 동일 학번의 새 기기가 응시를 시작하는 시점에 호출. 기존 sessionUuid는 무효화된다.
+     * 호출 전에 다른 기기가 Redis lock을 들고 있지 않은지(=30초 grace 만료) 반드시 검증해야 한다.
+     */
+    public void regenerateSessionUuid() {
+        this.sessionUuid = UUID.randomUUID();
     }
 
     /**

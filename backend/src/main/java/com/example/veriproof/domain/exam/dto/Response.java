@@ -71,6 +71,7 @@ public class Response{
     ) {}
 
     public record SessionDetailDto(
+            Long id,                        // 주관식 채점 엔드포인트의 path 파라미터로 사용
             String sessionUuid,
             String studentNumber,
             String studentName,
@@ -78,5 +79,31 @@ public class Response{
             Integer totalScore,
             OffsetDateTime startedAt,
             OffsetDateTime submittedAt
+    ) {}
+
+    /**
+     * 교수가 학생 한 명의 답안 전체를 조회할 때 사용하는 응답.
+     * 백로그 11 (주관식 채점) UI에서 호출.
+     */
+    public record SessionAnswersResponse(
+            Long sessionId,
+            String studentNumber,
+            String studentName,
+            String status,
+            Integer totalScore,
+            OffsetDateTime submittedAt,
+            List<AnswerDetailDto> answers
+    ) {}
+
+    public record AnswerDetailDto(
+            Long questionId,
+            String questionType,            // SUBJECTIVE | MULTIPLE_CHOICE
+            String questionBody,
+            Integer points,
+            String correctAnswer,           // 주관식 참조용 정답 (null 가능)
+            Integer earnedScore,
+            String answerText,              // 주관식 학생 답안
+            List<Long> selectedChoiceIds,   // 학생이 선택한 객관식 id
+            List<ChoiceDetailDto> choices   // 객관식 선택지 (정답 표시 포함)
     ) {}
 }
