@@ -31,7 +31,7 @@ http://localhost:8081/api/v1
 
 - 교수: `Authorization: Bearer {jwt}` (1-2에서 발급)
 - 학생: `X-Session-Token: {sessionUuid}` (POST `/student/exams/{examCode}/sessions`에서 발급)
-- 감독관: `X-Proctor-Token: {uuid}` (Sprint 3)
+- 감독관: URL path의 `proctorToken` (UUID, `exam.proctor_token`과 직접 매칭). SSE EventSource가 커스텀 헤더를 지원하지 않아 path 매칭 채택.
 
 ### 시간
 
@@ -369,6 +369,252 @@ lookup·세션 시작은 무인증, 그 외 학생 엔드포인트는 모두 토
 
 ---
 
+## Sprint 3 엔드포인트 (실시간 이벤트 / 답안 재생 / 감독관)
+
+상세 설계 근거: [sprint3-realtime-spec.md](./sprint3-realtime-spec.md).
+
+### 학생 — 이벤트 수집
+
+base path: `/api/v1/student`, `X-Session-Token` 헤더 필수.
+
+#### POST /student/sessions/me/events [session]
+
+즉시 이벤트 (백로그 13). 발생 즉시 단건 또는 묶음 전송.
+
+```json
+// req
+{
+  "events": [
+    {
+      "type": "PASTE",
+      "occurredAt": "2026-05-13T10:01:23.456Z",
+      "questionId": 10,
+      "payload": { "length": 142, "preview": "BFS는 너비 우선..." }
+    },
+    {
+      "type": "VISIBILITY_LOST",
+      "occurredAt": "2026-05-13T10:02:00.000Z",
+      "questionId": 10
+    },
+    {
+      "type": "VISIBILITY_RESTORED",
+      "occurredAt": "2026-05-13T10:02:08.000Z",
+      "questionId": 10
+    }
+  ]
+}
+// res 204
+```
+
+지원 `type`: `PASTE`, `VISIBILITY_LOST`, `VISIBILITY_RESTORED`, `FULLSCREEN_EXIT`, `FULLSCREEN_ENTER`, `CAPTURE_SHORTCUT`, `WINDOW_BLUR`.
+
+서버가 `VISIBILITY_RESTORED`/`FULLSCREEN_ENTER` 수신 시 가장 가까운 미페어링 LOST/EXIT을 찾아 `duration_ms`를 RESTORED row에 기록. 점수 부여(+1) 후 감독관 SSE에 broadcast.
+
+에러: 401 `INVALID_SESSION_TOKEN`, 404 `SESSION_NOT_FOUND`, 409 `SESSION_ALREADY_SUBMITTED`, 400 `EXAM_ENDED` / `EVENT_TYPE_INVALID`.
+
+#### POST /student/sessions/me/events/batch [session]
+
+배치 이벤트 + 답안 스냅샷 (백로그 14). 클라이언트가 60초 단위로 누적해 전송. 제출 직전에 잔여분 flush 권장.
+
+```json
+// req
+{
+  "batchPeriodStart": "2026-05-13T10:00:00Z",
+  "batchPeriodEnd":   "2026-05-13T10:01:00Z",
+  "events": [
+    { "type": "KEYSTROKE", "occurredAt": "...", "questionId": 10, "payload": {"key":"B","action":"insert"} },
+    { "type": "CHOICE_CHANGE", "occurredAt": "...", "questionId": 11, "payload": {"from":[101],"to":[101,103]} },
+    { "type": "QUESTION_NAVIGATE", "occurredAt": "...", "payload": {"fromQuestionId":10,"toQuestionId":11} }
+  ],
+  "snapshots": [
+    { "questionId": 10, "capturedAt": "...", "answerText": "BFS는...", "selectedChoiceIds": null },
+    { "questionId": 11, "capturedAt": "...", "answerText": null, "selectedChoiceIds": [101,103] }
+  ]
+}
+// res 204
+```
+
+지원 `type`: `KEYSTROKE`, `CHOICE_CHANGE`, `QUESTION_NAVIGATE`.
+
+`CHOICE_CHANGE` 도착 시 직전 5초 내 `VISIBILITY_RESTORED`/`FULLSCREEN_ENTER`가 있으면 `SUSPICIOUS_CHOICE_CHANGE` 파생 row를 추가 INSERT + 점수 +1.
+
+에러: 401 `INVALID_SESSION_TOKEN`, 404 `SESSION_NOT_FOUND`, 409 `SESSION_ALREADY_SUBMITTED`, 400 `EXAM_ENDED` / `BATCH_PERIOD_INVALID`.
+
+### 교수 — 답안 재생
+
+#### GET /exams/{examId}/sessions/{sessionId}/replay [auth]
+
+종료된 학생 세션의 재생 데이터 (백로그 15). 시험 종료 후, 본인이 개설한 시험만.
+
+```json
+// res 200
+{
+  "data": {
+    "sessionId": 1,
+    "studentNumber": "20230001",
+    "studentName": "...",
+    "examTitle": "...",
+    "startedAt": "...",
+    "submittedAt": "...",
+    "questions": [
+      { "id": 10, "questionType": "SUBJECTIVE", "body": "...", "displayOrder": 1, "points": 25 }
+    ],
+    "timeline": [
+      { "t": 0,     "type": "QUESTION_NAVIGATE", "questionId": 10, "payload": {"toQuestionId":10} },
+      { "t": 1234,  "type": "KEYSTROKE", "questionId": 10, "payload": {"key":"B","action":"insert"} },
+      { "t": 5000,  "type": "PASTE", "questionId": 10, "payload": {"length":142,"preview":"..."} },
+      { "t": 8000,  "type": "VISIBILITY_LOST", "questionId": 10 },
+      { "t": 14000, "type": "VISIBILITY_RESTORED", "questionId": 10, "payload": {"durationMs":6000} },
+      { "t": 14100, "type": "CHOICE_CHANGE", "questionId": 11, "payload": {"from":[],"to":[103]} },
+      { "t": 14100, "type": "SUSPICIOUS_CHOICE_CHANGE", "questionId": 11, "payload": {"deltaMs":100} }
+    ],
+    "snapshots": [
+      { "t": 60000, "questionId": 10, "answerText": "BFS는...", "selectedChoiceIds": null }
+    ]
+  }
+}
+```
+
+`t`: `startedAt` 기준 상대 ms. `timeline`/`snapshots` 모두 `t` 오름차순. 프론트는 임의 시점 점프 시 가장 가까운 snapshot을 초기 상태로 두고 timeline forward 재생.
+
+에러: 404 `SESSION_NOT_FOUND` / `EXAM_NOT_FOUND`, 403 `FORBIDDEN`, 400 `SESSION_NOT_SUBMITTED`.
+
+### 감독관
+
+base path: `/api/v1/proctor`. URL path의 `proctorToken` UUID로 인증. 별도 헤더 없음.
+
+#### GET /proctor/exams/{proctorToken}
+
+대시보드 메타 (백로그 16).
+
+```json
+// res 200
+{
+  "data": {
+    "examId": 1,
+    "title": "...",
+    "startsAt": "...",
+    "endsAt": "...",
+    "rosterCount": 30,
+    "activeCount": 28
+  }
+}
+```
+
+에러: 401 `PROCTOR_TOKEN_INVALID`.
+
+#### GET /proctor/exams/{proctorToken}/students
+
+학생 카드 목록 (백로그 16, 17). 쿼리: `?sort=attention|studentNumber` (기본 `attention`).
+
+```json
+// res 200
+{
+  "data": [
+    {
+      "sessionUuid": "...",
+      "studentNumber": "20230001",
+      "studentName": "...",
+      "currentQuestionId": 10,
+      "lastActivityAt": "...",
+      "attentionScore": 7,
+      "attentionLevel": "HIGH",
+      "status": "IN_PROGRESS"
+    }
+  ]
+}
+```
+
+`attentionLevel`: 점수 임계 기반 — `HIGH ≥ 4`, `MID ≥ 2`, `LOW ≥ 1`, `NORMAL = 0`.
+
+#### GET /proctor/exams/{proctorToken}/students/{sessionUuid}
+
+학생 상세 패널 (백로그 17).
+
+```json
+// res 200
+{
+  "data": {
+    "studentNumber": "...",
+    "studentName": "...",
+    "attentionScore": 7,
+    "attentionLevel": "HIGH",
+    "signals": {
+      "paste": 3,
+      "visibilityLost": 2,
+      "fullscreenExit": 1,
+      "captureShortcut": 0,
+      "suspiciousChoiceChange": 1
+    },
+    "avgVisibilityDurationMs": 4200,
+    "recentEvents": [
+      { "type": "PASTE", "occurredAt": "...", "questionId": 10, "payload": {...} }
+    ],
+    "currentAnswerPreview": {
+      "questionId": 10,
+      "answerText": "BFS는 너비 우선...",
+      "selectedChoiceIds": null
+    }
+  }
+}
+```
+
+에러: 401 `PROCTOR_TOKEN_INVALID`, 404 `SESSION_NOT_FOUND`.
+
+#### GET /proctor/exams/{proctorToken}/events
+
+이벤트 피드 폴백 (백로그 18). 시간 역순. 쿼리: `?since={iso}&limit=50` (기본 50, 최대 200).
+
+```json
+// res 200
+{
+  "data": [
+    {
+      "id": 12345,
+      "sessionUuid": "...",
+      "studentNumber": "20230001",
+      "type": "VISIBILITY_RESTORED",
+      "questionId": 10,
+      "occurredAt": "...",
+      "durationMs": 6000,
+      "payload": {}
+    }
+  ]
+}
+```
+
+SSE 초기 적재용 + 재연결 시 갭 보충용.
+
+#### GET /proctor/exams/{proctorToken}/stream
+
+SSE 실시간 채널 (백로그 17, 18).
+
+```
+Accept: text/event-stream
+```
+
+서버 push 이벤트:
+
+```
+event: student-event
+data: {"id":12345,"sessionUuid":"...","studentNumber":"...","type":"PASTE","questionId":10,"occurredAt":"...","payload":{...}}
+
+event: attention-update
+data: {"sessionUuid":"...","score":7,"level":"HIGH","delta":1}
+
+event: session-status
+data: {"sessionUuid":"...","status":"SUBMITTED"}
+
+event: heartbeat
+data: {}
+```
+
+30초마다 `heartbeat` 송신으로 연결 유지. 프론트는 `student-event` 수신 시 피드 prepend, `attention-update` 수신 시 카드 색상/위치 갱신, `session-status` 수신 시 카드 제거/비활성화.
+
+에러: 401 `PROCTOR_TOKEN_INVALID`.
+
+---
+
 ## 에러 코드
 
 | 코드 | HTTP | 비고 |
@@ -386,6 +632,10 @@ lookup·세션 시작은 무인증, 그 외 학생 엔드포인트는 모두 토
 | `QUESTION_NOT_IN_EXAM` | 400 | 문항이 해당 시험 소속 아님 |
 | `INVALID_CREDENTIALS` | 401 | 로그인 실패 |
 | `INVALID_SESSION_TOKEN` | 401 | `X-Session-Token` 헤더 검증 실패 |
+| `PROCTOR_TOKEN_INVALID` | 401 | URL path의 proctorToken으로 시험을 찾을 수 없음 |
+| `EVENT_TYPE_INVALID` | 400 | 미지원 `event_type` 값 |
+| `BATCH_PERIOD_INVALID` | 400 | `batchPeriodStart >= batchPeriodEnd` 등 |
+| `SESSION_NOT_SUBMITTED` | 400 | 채점/재생은 제출된 세션만 허용 |
 | `FORBIDDEN` | 403 | 본인 자원 아님 |
 | `STUDENT_NOT_IN_ROSTER` | 403 | 명단 미등록 또는 이름 불일치 |
 | `EXAM_NOT_FOUND` | 404 | 시험 ID 미존재 |
