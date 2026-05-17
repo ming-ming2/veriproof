@@ -31,3 +31,9 @@ export const sendHeartbeat = (sessionToken) =>
   axiosInstance.post('/student/sessions/me/heartbeat', null, {
     headers: { 'X-Session-Token': sessionToken },
   });
+
+// 1분 주기 행동 로그 전송 [X-Session-Token]
+export const sendBehaviorLogs = (sessionToken, data) =>
+  axiosInstance.post('/student/sessions/me/behavior-logs', data, {
+    headers: { 'X-Session-Token': sessionToken },
+  });
