@@ -164,7 +164,7 @@ export default function Replay() {
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  /*const [error, setError] = useState("");*/
+  const [error, setError] = useState("");
 
   const [selectedQid, setSelectedQid] = useState(null);
   const [playing, setPlaying] = useState(false);
@@ -176,7 +176,6 @@ export default function Replay() {
 
   // 데이터 로드
   useEffect(() => {
-    /*
     let cancelled = false;
     (async () => {
       try {
@@ -205,106 +204,6 @@ export default function Replay() {
     return () => {
       cancelled = true;
     };
-    */
-    const mockData = {
-      examTitle: "2026학년도 1학기 소프트웨어공학 중간고사",
-      studentName: "홍진서",
-      studentNumber: "60221325",
-      startedAt: new Date(Date.now() - 120000).toISOString(),
-      submittedAt: new Date().toISOString(),
-      questions: [
-        {
-          id: 1,
-          displayOrder: 1,
-          questionType: "SUBJECTIVE",
-          points: 10,
-          body: "1. 애자일(Agile) 방법론의 핵심 가치 중 하나를 고르고 그 이유를 서술하시오."
-        },
-        {
-          id: 2,
-          displayOrder: 2,
-          questionType: "MULTIPLE_CHOICE",
-          points: 5,
-          body: "2. 다음 중 객체지향 설계 원칙(SOLID)에 해당하지 않는 것은?",
-          choices: [
-            { id: 201, displayOrder: 1 }, // 단일 책임 원칙
-            { id: 202, displayOrder: 2 }, // 개방 폐쇄 원칙
-            { id: 203, displayOrder: 3 }, // 데메테르의 법칙 (정답)
-            { id: 204, displayOrder: 4 }, // 리스코프 치환 원칙
-            { id: 205, displayOrder: 5 }  // 의존성 역전 원칙
-          ]
-        },
-        {
-          id: 3,
-          displayOrder: 3,
-          questionType: "SUBJECTIVE",
-          points: 15,
-          body: "3. MVC(Model-View-Controller) 패턴에서 Controller의 역할을 간략히 설명하시오."
-        },
-        {
-          id: 4,
-          displayOrder: 4,
-          questionType: "MULTIPLE_CHOICE",
-          points: 5,
-          body: "4. 다음 중 화이트박스 테스트(White-box Testing) 기법으로 올바른 것은?",
-          choices: [
-            { id: 401, displayOrder: 1 }, // 구문 커버리지 (정답)
-            { id: 402, displayOrder: 2 }, // 동등 분할
-            { id: 403, displayOrder: 3 }, // 경계값 분석
-            { id: 404, displayOrder: 4 }, // 원인-결과 그래프
-            { id: 405, displayOrder: 5 }  // 상태 전이 테스트
-          ]
-        },
-        {
-          id: 5,
-          displayOrder: 5,
-          questionType: "SUBJECTIVE",
-          points: 10,
-          body: "5. 테스트 주도 개발(TDD)의 주기를 3단계로 적으시오."
-        }
-      ],
-      timeline: [
-        // 1번 문항: 애자일 가치 (타이핑 & 붙여넣기 콤보)
-        { type: "QUESTION_NAVIGATE", questionId: 1, t: 0, payload: { toQuestionId: 1 } },
-        { type: "PASTE", questionId: 1, t: 2000, payload: { preview: "가장 중요한 가치는 '변화에 대한 대응'입니다." } },
-        { type: "KEYSTROKE", questionId: 1, t: 4000, payload: { key: " ", action: "insert" } },
-        { type: "KEYSTROKE", questionId: 1, t: 4200, payload: { key: "R", action: "insert" } },
-        { type: "KEYSTROKE", questionId: 1, t: 4400, payload: { key: "e", action: "insert" } },
-        { type: "KEYSTROKE", questionId: 1, t: 4600, payload: { key: "a", action: "insert" } },
-        { type: "KEYSTROKE", questionId: 1, t: 4800, payload: { key: "c", action: "insert" } },
-        { type: "KEYSTROKE", questionId: 1, t: 5000, payload: { key: "t", action: "insert" } },
-        { type: "PASTE", questionId: 1, t: 6500, payload: { preview: " 컴포넌트를 개발할 때 요구사항이 바뀌어도 스프린트 주기에 맞춰 유연하게 수정할 수 있기 때문입니다." } },
-
-        // 2번 문항: SOLID 원칙
-        { type: "QUESTION_NAVIGATE", questionId: 2, t: 10000, payload: { fromQuestionId: 1, toQuestionId: 2 } },
-        { type: "CHOICE_CHANGE", questionId: 2, t: 13000, payload: { from: [], to: [203] } }, // 3번 고민 없이 선택
-
-        // 3번 문항: MVC 패턴 (구글링하러 화면 이탈 발생)
-        { type: "QUESTION_NAVIGATE", questionId: 3, t: 16000, payload: { fromQuestionId: 2, toQuestionId: 3 } },
-        { type: "VISIBILITY_LOST", questionId: 3, t: 18000, payload: {} }, // 구글링하러 떠남
-        { type: "VISIBILITY_RESTORED", questionId: 3, t: 25000, durationMs: 7000, payload: { pairedWith: "VISIBILITY_LOST" } }, // 7초 뒤 복귀
-        { type: "PASTE", questionId: 3, t: 26000, payload: { preview: "사용자의 HTTP 요청을 받아 적절한 로직을 수행하도록 Model에 지시하고," } },
-        { type: "PASTE", questionId: 3, t: 28000, payload: { preview: " 처리된 결과를 View에 전달하는 라우팅 역할을 합니다." } },
-
-        // 4번 문항: 화이트박스 테스트 (답 고쳤다 바꾸기)
-        { type: "QUESTION_NAVIGATE", questionId: 4, t: 32000, payload: { fromQuestionId: 3, toQuestionId: 4 } },
-        { type: "CHOICE_CHANGE", questionId: 4, t: 36000, payload: { from: [], to: [403] } }, // 블랙박스 기법인 경계값 분석 잘못 선택
-        { type: "CHOICE_CHANGE", questionId: 4, t: 41000, payload: { from: [403], to: [401] } }, // 아차 싶어서 구문 커버리지로 수정
-
-        // 5번 문항: TDD 3단계
-        { type: "QUESTION_NAVIGATE", questionId: 5, t: 45000, payload: { fromQuestionId: 4, toQuestionId: 5 } },
-        { type: "PASTE", questionId: 5, t: 48000, payload: { preview: "1. Red (실패하는 테스트 작성)\n2. Green (테스트 통과 코드 작성)\n3. Refactor (리팩토링)" } },
-
-        // 제출 직전 1번 문항 다시 확인하러 감
-        { type: "QUESTION_NAVIGATE", questionId: 1, t: 55000, payload: { fromQuestionId: 5, toQuestionId: 1 } }
-      ]
-    };
-
-    setTimeout(() => {
-      setData(mockData);
-      setSelectedQid(mockData.questions[0].id);
-      setLoading(false);
-    }, 800);
 
   }, [examId, sessionId]);
 
@@ -440,7 +339,7 @@ export default function Replay() {
     );
   }
 
-  /*if (error || !data) {
+  if (error || !data) {
     return (
       <div style={styles.page}>
         <nav style={styles.nav}>
@@ -457,7 +356,6 @@ export default function Replay() {
       </div>
     );
   }
-*/
 
   return (
     <div style={styles.page}>
