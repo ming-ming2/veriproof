@@ -20,6 +20,9 @@ import ProfileEdit from './pages/ProfileEdit';  // ← 신규
 // 백로그 11 (주관식 채점) 페이지
 import SessionGrade from './pages/SessionGrade';
 
+// 백로그 15 (답안 재생) 페이지
+import Replay from './pages/Replay';
+
 // 로그인된 사용자만 접근 가능한 라우트 보호
 function PrivateRoute({ children }) {
     const token = localStorage.getItem('token');
@@ -80,6 +83,15 @@ export default function App() {
                     element={
                         <PrivateRoute>
                             <SessionGrade />
+                        </PrivateRoute>
+                    }
+                />
+                {/* 백로그 15: 종료된 시험 답안 재생 */}
+                <Route
+                    path="/exam/:examId/sessions/:sessionId/replay"
+                    element={
+                        <PrivateRoute>
+                            <Replay />
                         </PrivateRoute>
                     }
                 />

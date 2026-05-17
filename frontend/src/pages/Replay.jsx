@@ -1,0 +1,957 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { getReplay } from "../api/exam";
+
+const TICK_MS = 50; // 재생 루프 간격
+
+const formatClock = (ms) => {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = String(Math.floor(total / 60)).padStart(2, "0");
+  const s = String(total % 60).padStart(2, "0");
+  return `${m}:${s}`;
+};
+
+const formatAbs = (iso) => {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+};
+
+// 타임라인 + 스냅샷에서 총 길이(ms) 계산. submittedAt 이 있으면 그쪽도 후보.
+const computeDuration = (data) => {
+  let maxT = 0;
+  (data.timeline || []).forEach((e) => {
+    if (typeof e.t === "number" && e.t > maxT) maxT = e.t;
+    if (e.payload && typeof e.payload.durationMs === "number") {
+      maxT = Math.max(maxT, e.t + e.payload.durationMs);
+    }
+  });
+  (data.snapshots || []).forEach((s) => {
+    if (typeof s.t === "number" && s.t > maxT) maxT = s.t;
+  });
+  if (data.startedAt && data.submittedAt) {
+    const diff = new Date(data.submittedAt) - new Date(data.startedAt);
+    if (diff > maxT) maxT = diff;
+  }
+  // 최소 10초 보장 (시각화)
+  return Math.max(maxT, 10000);
+};
+
+// 선택된 문항에 사용자가 머문 시간 구간들을 계산. [{from, to}, ...]
+const computeActiveRanges = (timeline, totalDuration, selectedQid, fallbackQid) => {
+  const navs = timeline
+    .filter((e) => e.type === "QUESTION_NAVIGATE")
+    .slice()
+    .sort((a, b) => a.t - b.t);
+
+  // QUESTION_NAVIGATE 가 하나도 없으면 fallbackQid 가 첫 문항이라 가정
+  if (navs.length === 0) {
+    return fallbackQid === selectedQid ? [{ from: 0, to: totalDuration }] : [];
+  }
+
+  const ranges = [];
+  // 첫 nav 이전 구간: 알 수 없음 → 비활성으로 두되 첫 nav 의 questionId 가 selected 이면 0부터 시작
+  let currentQid = navs[0].payload?.toQuestionId ?? navs[0].questionId;
+  let currentStart = 0;
+
+  for (let i = 1; i < navs.length; i++) {
+    const e = navs[i];
+    if (currentQid === selectedQid) {
+      ranges.push({ from: currentStart, to: e.t });
+    }
+    currentQid = e.payload?.toQuestionId ?? e.questionId;
+    currentStart = e.t;
+  }
+  // 마지막 nav 이후
+  if (currentQid === selectedQid) {
+    ranges.push({ from: currentStart, to: totalDuration });
+  }
+  return ranges;
+};
+
+// VISIBILITY_LOST / VISIBILITY_RESTORED 페어를 [{from, to, durationMs}, ...] 로
+const computeVisibilityRanges = (timeline, totalDuration) => {
+  const lostStack = [];
+  const out = [];
+  timeline
+    .slice()
+    .sort((a, b) => a.t - b.t)
+    .forEach((e) => {
+      if (e.type === "VISIBILITY_LOST") {
+        lostStack.push(e);
+      } else if (e.type === "VISIBILITY_RESTORED") {
+        const lost = lostStack.shift();
+        if (lost) {
+          const from = lost.t;
+          const dur = e.payload?.durationMs ?? e.t - lost.t;
+          out.push({ from, to: from + dur, durationMs: dur });
+        }
+      }
+    });
+  // 페어링 안 된 LOST 는 끝까지 이탈한 것으로 처리
+  lostStack.forEach((lost) => {
+    out.push({
+      from: lost.t,
+      to: totalDuration,
+      durationMs: totalDuration - lost.t,
+      unpaired: true,
+    });
+  });
+  return out;
+};
+
+// 같은 t (±50ms) 에 SUSPICIOUS_CHOICE_CHANGE 가 있으면 의심으로 마킹
+const isSuspicious = (timeline, choiceChangeEvent) => {
+  return timeline.some(
+    (e) =>
+      e.type === "SUSPICIOUS_CHOICE_CHANGE" &&
+      e.questionId === choiceChangeEvent.questionId &&
+      Math.abs(e.t - choiceChangeEvent.t) <= 50
+  );
+};
+
+// 주관식: currentTime 기준의 텍스트 세그먼트 ({text, paste:boolean}[])
+const reconstructText = (events, currentTime) => {
+  const segments = []; // [{text, paste}]
+  const pushChar = (ch) => {
+    const last = segments[segments.length - 1];
+    if (last && !last.paste) last.text += ch;
+    else segments.push({ text: ch, paste: false });
+  };
+  const popChar = () => {
+    const last = segments[segments.length - 1];
+    if (!last) return;
+    if (last.paste) {
+      // paste 블록은 한 번에 삭제되지 않으므로, 한 글자만 제거
+      last.text = last.text.slice(0, -1);
+      if (!last.text) segments.pop();
+    } else {
+      last.text = last.text.slice(0, -1);
+      if (!last.text) segments.pop();
+    }
+  };
+  events
+    .filter((e) => e.t <= currentTime)
+    .forEach((e) => {
+      if (e.type === "KEYSTROKE") {
+        const key = e.payload?.key ?? "";
+        const action = e.payload?.action ?? "insert";
+        if (action === "insert") pushChar(key);
+        else if (action === "delete") popChar();
+      } else if (e.type === "PASTE") {
+        const preview = e.payload?.preview ?? "";
+        segments.push({ text: preview, paste: true });
+      }
+    });
+  return segments;
+};
+
+// 객관식: currentTime 시점까지 적용된 CHOICE_CHANGE 리스트 + 의심 플래그
+const collectChoiceHistory = (events, allTimeline, currentTime) => {
+  return events
+    .filter((e) => e.type === "CHOICE_CHANGE" && e.t <= currentTime)
+    .map((e) => ({
+      t: e.t,
+      from: e.payload?.from ?? [],
+      to: e.payload?.to ?? [],
+      suspicious: isSuspicious(allTimeline, e),
+    }));
+};
+
+export default function Replay() {
+  const navigate = useNavigate();
+  const { examId, sessionId } = useParams();
+
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  /*const [error, setError] = useState("");*/
+
+  const [selectedQid, setSelectedQid] = useState(null);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [currentTime, setCurrentTime] = useState(0);
+
+  const lastTickRef = useRef(null);
+  const rafRef = useRef(null);
+
+  // 데이터 로드
+  useEffect(() => {
+    /*
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: res } = await getReplay(examId, sessionId);
+        if (cancelled) return;
+        setData(res.data);
+        const firstQ = (res.data.questions || [])
+          .slice()
+          .sort((a, b) => a.displayOrder - b.displayOrder)[0];
+        if (firstQ) setSelectedQid(firstQ.id);
+      } catch (err) {
+        if (cancelled) return;
+        const code = err.response?.data?.error?.code;
+        if (code === "SESSION_NOT_SUBMITTED") {
+          setError("아직 제출되지 않은 응시는 재생할 수 없습니다.");
+        } else {
+          setError(
+            err.response?.data?.error?.message ||
+              "답안 재생 데이터를 불러오지 못했습니다."
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    */
+    const mockData = {
+      examTitle: "2026학년도 1학기 소프트웨어공학 중간고사",
+      studentName: "홍진서",
+      studentNumber: "60221325",
+      startedAt: new Date(Date.now() - 120000).toISOString(),
+      submittedAt: new Date().toISOString(),
+      questions: [
+        {
+          id: 1,
+          displayOrder: 1,
+          questionType: "SUBJECTIVE",
+          points: 10,
+          body: "1. 애자일(Agile) 방법론의 핵심 가치 중 하나를 고르고 그 이유를 서술하시오."
+        },
+        {
+          id: 2,
+          displayOrder: 2,
+          questionType: "MULTIPLE_CHOICE",
+          points: 5,
+          body: "2. 다음 중 객체지향 설계 원칙(SOLID)에 해당하지 않는 것은?",
+          choices: [
+            { id: 201, displayOrder: 1 }, // 단일 책임 원칙
+            { id: 202, displayOrder: 2 }, // 개방 폐쇄 원칙
+            { id: 203, displayOrder: 3 }, // 데메테르의 법칙 (정답)
+            { id: 204, displayOrder: 4 }, // 리스코프 치환 원칙
+            { id: 205, displayOrder: 5 }  // 의존성 역전 원칙
+          ]
+        },
+        {
+          id: 3,
+          displayOrder: 3,
+          questionType: "SUBJECTIVE",
+          points: 15,
+          body: "3. MVC(Model-View-Controller) 패턴에서 Controller의 역할을 간략히 설명하시오."
+        },
+        {
+          id: 4,
+          displayOrder: 4,
+          questionType: "MULTIPLE_CHOICE",
+          points: 5,
+          body: "4. 다음 중 화이트박스 테스트(White-box Testing) 기법으로 올바른 것은?",
+          choices: [
+            { id: 401, displayOrder: 1 }, // 구문 커버리지 (정답)
+            { id: 402, displayOrder: 2 }, // 동등 분할
+            { id: 403, displayOrder: 3 }, // 경계값 분석
+            { id: 404, displayOrder: 4 }, // 원인-결과 그래프
+            { id: 405, displayOrder: 5 }  // 상태 전이 테스트
+          ]
+        },
+        {
+          id: 5,
+          displayOrder: 5,
+          questionType: "SUBJECTIVE",
+          points: 10,
+          body: "5. 테스트 주도 개발(TDD)의 주기를 3단계로 적으시오."
+        }
+      ],
+      timeline: [
+        // 1번 문항: 애자일 가치 (타이핑 & 붙여넣기 콤보)
+        { type: "QUESTION_NAVIGATE", questionId: 1, t: 0, payload: { toQuestionId: 1 } },
+        { type: "PASTE", questionId: 1, t: 2000, payload: { preview: "가장 중요한 가치는 '변화에 대한 대응'입니다." } },
+        { type: "KEYSTROKE", questionId: 1, t: 4000, payload: { key: " ", action: "insert" } },
+        { type: "KEYSTROKE", questionId: 1, t: 4200, payload: { key: "R", action: "insert" } },
+        { type: "KEYSTROKE", questionId: 1, t: 4400, payload: { key: "e", action: "insert" } },
+        { type: "KEYSTROKE", questionId: 1, t: 4600, payload: { key: "a", action: "insert" } },
+        { type: "KEYSTROKE", questionId: 1, t: 4800, payload: { key: "c", action: "insert" } },
+        { type: "KEYSTROKE", questionId: 1, t: 5000, payload: { key: "t", action: "insert" } },
+        { type: "PASTE", questionId: 1, t: 6500, payload: { preview: " 컴포넌트를 개발할 때 요구사항이 바뀌어도 스프린트 주기에 맞춰 유연하게 수정할 수 있기 때문입니다." } },
+
+        // 2번 문항: SOLID 원칙
+        { type: "QUESTION_NAVIGATE", questionId: 2, t: 10000, payload: { fromQuestionId: 1, toQuestionId: 2 } },
+        { type: "CHOICE_CHANGE", questionId: 2, t: 13000, payload: { from: [], to: [203] } }, // 3번 고민 없이 선택
+
+        // 3번 문항: MVC 패턴 (구글링하러 화면 이탈 발생)
+        { type: "QUESTION_NAVIGATE", questionId: 3, t: 16000, payload: { fromQuestionId: 2, toQuestionId: 3 } },
+        { type: "VISIBILITY_LOST", questionId: 3, t: 18000, payload: {} }, // 구글링하러 떠남
+        { type: "VISIBILITY_RESTORED", questionId: 3, t: 25000, durationMs: 7000, payload: { pairedWith: "VISIBILITY_LOST" } }, // 7초 뒤 복귀
+        { type: "PASTE", questionId: 3, t: 26000, payload: { preview: "사용자의 HTTP 요청을 받아 적절한 로직을 수행하도록 Model에 지시하고," } },
+        { type: "PASTE", questionId: 3, t: 28000, payload: { preview: " 처리된 결과를 View에 전달하는 라우팅 역할을 합니다." } },
+
+        // 4번 문항: 화이트박스 테스트 (답 고쳤다 바꾸기)
+        { type: "QUESTION_NAVIGATE", questionId: 4, t: 32000, payload: { fromQuestionId: 3, toQuestionId: 4 } },
+        { type: "CHOICE_CHANGE", questionId: 4, t: 36000, payload: { from: [], to: [403] } }, // 블랙박스 기법인 경계값 분석 잘못 선택
+        { type: "CHOICE_CHANGE", questionId: 4, t: 41000, payload: { from: [403], to: [401] } }, // 아차 싶어서 구문 커버리지로 수정
+
+        // 5번 문항: TDD 3단계
+        { type: "QUESTION_NAVIGATE", questionId: 5, t: 45000, payload: { fromQuestionId: 4, toQuestionId: 5 } },
+        { type: "PASTE", questionId: 5, t: 48000, payload: { preview: "1. Red (실패하는 테스트 작성)\n2. Green (테스트 통과 코드 작성)\n3. Refactor (리팩토링)" } },
+
+        // 제출 직전 1번 문항 다시 확인하러 감
+        { type: "QUESTION_NAVIGATE", questionId: 1, t: 55000, payload: { fromQuestionId: 5, toQuestionId: 1 } }
+      ]
+    };
+
+    setTimeout(() => {
+      setData(mockData);
+      setSelectedQid(mockData.questions[0].id);
+      setLoading(false);
+    }, 800);
+
+  }, [examId, sessionId]);
+
+
+  const totalDuration = useMemo(
+    () => (data ? computeDuration(data) : 0),
+    [data]
+  );
+
+  const questions = useMemo(
+    () =>
+      (data?.questions || []).slice().sort((a, b) => a.displayOrder - b.displayOrder),
+    [data]
+  );
+
+  const selectedQuestion = useMemo(
+    () => questions.find((q) => q.id === selectedQid) || null,
+    [questions, selectedQid]
+  );
+
+  const timeline = data?.timeline || [];
+
+  // 현재 문항 한정 이벤트 (주관식/객관식 재생용)
+  const questionEvents = useMemo(
+    () => timeline.filter((e) => e.questionId === selectedQid),
+    [timeline, selectedQid]
+  );
+
+  // 활성 구간 (현재 문항에 머문 시간)
+  const activeRanges = useMemo(() => {
+    if (!data || !selectedQid) return [];
+    const first = questions[0]?.id;
+    return computeActiveRanges(timeline, totalDuration, selectedQid, first);
+  }, [data, selectedQid, timeline, totalDuration, questions]);
+
+  // 화면 이탈 구간 (전 문항 공통)
+  const visibilityRanges = useMemo(
+    () => computeVisibilityRanges(timeline, totalDuration),
+    [timeline, totalDuration]
+  );
+
+  // 재생 루프
+  useEffect(() => {
+    if (!playing) {
+      lastTickRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      const now = performance.now();
+      const delta = lastTickRef.current ? now - lastTickRef.current : TICK_MS;
+      lastTickRef.current = now;
+      setCurrentTime((t) => {
+        const next = t + delta * speed;
+        if (next >= totalDuration) {
+          setPlaying(false);
+          return totalDuration;
+        }
+        return next;
+      });
+      rafRef.current = setTimeout(tick, TICK_MS);
+    };
+    rafRef.current = setTimeout(tick, TICK_MS);
+    return () => {
+      cancelled = true;
+      if (rafRef.current) clearTimeout(rafRef.current);
+    };
+  }, [playing, speed, totalDuration]);
+
+  const handlePlayPause = () => {
+    if (!playing && currentTime >= totalDuration) {
+      setCurrentTime(0);
+    }
+    setPlaying((p) => !p);
+  };
+
+  const handleQuestionChange = (e) => {
+    setSelectedQid(Number(e.target.value));
+    setCurrentTime(0);
+    setPlaying(false);
+  };
+
+  const handleTimelineClick = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    const next = Math.max(0, Math.min(1, ratio)) * totalDuration;
+    setCurrentTime(next);
+  };
+
+  // 주관식/객관식 표시
+  const subjectiveSegments = useMemo(() => {
+    if (!selectedQuestion || selectedQuestion.questionType !== "SUBJECTIVE") {
+      return [];
+    }
+    return reconstructText(questionEvents, currentTime);
+  }, [selectedQuestion, questionEvents, currentTime]);
+
+  const choiceHistory = useMemo(() => {
+    if (!selectedQuestion || selectedQuestion.questionType !== "MULTIPLE_CHOICE") {
+      return [];
+    }
+    return collectChoiceHistory(questionEvents, timeline, currentTime);
+  }, [selectedQuestion, questionEvents, timeline, currentTime]);
+
+  // 선택지 ID → 라벨 (1번, 2번 …)
+  const choiceLabelMap = useMemo(() => {
+    const map = new Map();
+    questions.forEach((q) => {
+      if (q.questionType !== "MULTIPLE_CHOICE") return;
+      const sorted = (q.choices || [])
+        .slice()
+        .sort((a, b) => a.displayOrder - b.displayOrder);
+      sorted.forEach((c, idx) => {
+        map.set(c.id, `${idx + 1}번`);
+      });
+    });
+    return map;
+  }, [questions]);
+
+  const labelChoices = (ids) =>
+    (ids || []).map((id) => choiceLabelMap.get(id) || `#${id}`).join(", ") ||
+    "(선택 없음)";
+
+  if (loading) {
+    return (
+      <div style={styles.page}>
+        <nav style={styles.nav}>
+          <span style={styles.navTitle}>시험 플랫폼</span>
+        </nav>
+        <div style={styles.loadingText}>불러오는 중...</div>
+      </div>
+    );
+  }
+
+  /*if (error || !data) {
+    return (
+      <div style={styles.page}>
+        <nav style={styles.nav}>
+          <span style={styles.navTitle}>시험 플랫폼</span>
+        </nav>
+        <div style={styles.content}>
+          <div style={styles.emptyState}>
+            <p style={styles.emptyText}>{error || "재생 데이터를 찾을 수 없습니다."}</p>
+            <button style={styles.backBtn} onClick={() => navigate(-1)}>
+              돌아가기
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+*/
+
+  return (
+    <div style={styles.page}>
+      <nav style={styles.nav}>
+        <span style={styles.navTitle}>시험 플랫폼</span>
+        <button style={styles.backBtn} onClick={() => navigate(`/exam/${examId}`)}>
+          시험 상세로
+        </button>
+      </nav>
+
+      <div style={styles.content}>
+        <div style={styles.pageHeader}>
+          <div>
+            <p style={styles.breadcrumb}>{data.examTitle}</p>
+            <h1 style={styles.pageTitle}>답안 재생</h1>
+          </div>
+          <div style={styles.studentBadge}>
+            <div style={styles.studentName}>{data.studentName}</div>
+            <div style={styles.studentNumber}>{data.studentNumber}</div>
+          </div>
+        </div>
+
+        <div style={styles.metaRow}>
+          <div style={styles.metaCell}>
+            <div style={styles.metaLabel}>응시 시각</div>
+            <div style={styles.metaValue}>{formatAbs(data.startedAt)}</div>
+          </div>
+          <div style={styles.metaCell}>
+            <div style={styles.metaLabel}>제출 시각</div>
+            <div style={styles.metaValue}>{formatAbs(data.submittedAt)}</div>
+          </div>
+          <div style={styles.metaCell}>
+            <div style={styles.metaLabel}>총 길이</div>
+            <div style={styles.metaValue}>{formatClock(totalDuration)}</div>
+          </div>
+        </div>
+
+        {/* 문항 선택 */}
+        <div style={styles.sectionLabel}>문항 선택</div>
+        <select
+          style={styles.select}
+          value={selectedQid ?? ""}
+          onChange={handleQuestionChange}
+        >
+          {questions.map((q, idx) => (
+            <option key={q.id} value={q.id}>
+              {`문항 ${idx + 1} (${q.questionType === "MULTIPLE_CHOICE" ? "객관식" : "주관식"}) — ${q.points}점`}
+            </option>
+          ))}
+        </select>
+
+        {/* 문항 본문 */}
+        {selectedQuestion && (
+          <div style={styles.questionBody}>
+            <div style={styles.questionBodyLabel}>문제</div>
+            <div style={styles.questionBodyText}>{selectedQuestion.body}</div>
+          </div>
+        )}
+
+        {/* 재생 영역 */}
+        <div style={styles.sectionLabel}>재생</div>
+        <div style={styles.replayBox}>
+          {selectedQuestion?.questionType === "SUBJECTIVE" && (
+            <div style={styles.subjectiveArea}>
+              {subjectiveSegments.length === 0 ? (
+                <span style={styles.placeholder}>아직 작성된 내용이 없습니다.</span>
+              ) : (
+                subjectiveSegments.map((seg, idx) => (
+                  <span
+                    key={idx}
+                    style={seg.paste ? styles.pasteSegment : styles.typingSegment}
+                    title={seg.paste ? "붙여넣기 구간" : ""}
+                  >
+                    {seg.text}
+                  </span>
+                ))
+              )}
+              <span style={styles.cursor}>|</span>
+            </div>
+          )}
+
+          {selectedQuestion?.questionType === "MULTIPLE_CHOICE" && (
+            <div style={styles.mcArea}>
+              {choiceHistory.length === 0 ? (
+                <span style={styles.placeholder}>아직 선택 변경이 없습니다.</span>
+              ) : (
+                <ol style={styles.mcList}>
+                  {choiceHistory.map((h, idx) => (
+                    <li
+                      key={idx}
+                      style={{
+                        ...styles.mcItem,
+                        ...(h.suspicious ? styles.mcItemSuspicious : {}),
+                      }}
+                    >
+                      <span style={styles.mcTime}>[{formatClock(h.t)}]</span>
+                      <span style={styles.mcChange}>
+                        {labelChoices(h.from)} → {labelChoices(h.to)}
+                      </span>
+                      {h.suspicious && (
+                        <span style={styles.suspiciousTag}>화면 이탈 직후 변경</span>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 타임라인 */}
+        <div style={styles.sectionLabel}>타임라인</div>
+        <div style={styles.timelineWrap}>
+          <div style={styles.timelineRail} onClick={handleTimelineClick}>
+            {/* 회색 베이스 (전체 비활성) */}
+            <div style={styles.timelineBase} />
+            {/* 활성 구간 (이 문항에 머문 시간) */}
+            {activeRanges.map((r, idx) => (
+              <div
+                key={`a-${idx}`}
+                style={{
+                  ...styles.timelineActive,
+                  left: `${(r.from / totalDuration) * 100}%`,
+                  width: `${((r.to - r.from) / totalDuration) * 100}%`,
+                }}
+              />
+            ))}
+            {/* 화면 이탈 구간 (빨간 막대 + 지속시간) */}
+            {visibilityRanges.map((r, idx) => {
+              const widthPct = ((r.to - r.from) / totalDuration) * 100;
+              return (
+                <div
+                  key={`v-${idx}`}
+                  style={{
+                    ...styles.timelineVisibility,
+                    left: `${(r.from / totalDuration) * 100}%`,
+                    width: `${widthPct}%`,
+                  }}
+                  title={`화면 이탈 ${(r.durationMs / 1000).toFixed(1)}초`}
+                >
+                  {widthPct > 5 && (
+                    <span style={styles.timelineVisibilityLabel}>
+                      {(r.durationMs / 1000).toFixed(1)}s
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+            {/* 현재 위치 핸들 */}
+            <div
+              style={{
+                ...styles.timelineHandle,
+                left: `${(currentTime / totalDuration) * 100}%`,
+              }}
+            />
+          </div>
+          <div style={styles.timelineClocks}>
+            <span>{formatClock(currentTime)}</span>
+            <span style={styles.timelineLegend}>
+              <span style={styles.legendDot("#dcdcdc")} /> 다른 문항
+              <span style={styles.legendDot("#185FA5")} /> 이 문항
+              <span style={styles.legendDot("#e24b4a")} /> 화면 이탈
+            </span>
+            <span>{formatClock(totalDuration)}</span>
+          </div>
+        </div>
+
+        {/* 컨트롤 */}
+        <div style={styles.controls}>
+          <button style={styles.playBtn} onClick={handlePlayPause}>
+            {playing ? "❚❚ 일시정지" : "▶ 재생"}
+          </button>
+          <div style={styles.speedGroup}>
+            {[1, 2, 3].map((s) => (
+              <button
+                key={s}
+                style={{
+                  ...styles.speedBtn,
+                  ...(speed === s ? styles.speedBtnActive : {}),
+                }}
+                onClick={() => setSpeed(s)}
+              >
+                {s}배
+              </button>
+            ))}
+          </div>
+          <button
+            style={styles.resetBtn}
+            onClick={() => {
+              setCurrentTime(0);
+              setPlaying(false);
+            }}
+          >
+            처음으로
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const styles = {
+  page: {
+    minHeight: "100vh",
+    background: "#f7f7f8",
+    fontFamily:
+      '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  },
+  nav: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "12px 24px",
+    borderBottom: "1px solid #e5e5e5",
+    background: "#fff",
+  },
+  navTitle: { fontSize: 16, fontWeight: 500 },
+
+  content: { maxWidth: 880, margin: "0 auto", padding: "32px 20px" },
+  loadingText: { fontSize: 14, color: "#999", textAlign: "center", padding: 60 },
+
+  pageHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 16,
+    gap: 16,
+  },
+  breadcrumb: { fontSize: 13, color: "#888", margin: "0 0 2px" },
+  pageTitle: { fontSize: 20, fontWeight: 500, margin: 0 },
+
+  studentBadge: {
+    background: "#fff",
+    border: "1px solid #e5e5e5",
+    borderRadius: 10,
+    padding: "10px 16px",
+    minWidth: 140,
+    textAlign: "right",
+  },
+  studentName: { fontSize: 14, fontWeight: 500, color: "#222" },
+  studentNumber: {
+    fontSize: 12,
+    color: "#888",
+    marginTop: 2,
+    fontFamily: '"SF Mono", "Fira Code", monospace',
+  },
+
+  metaRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr 1fr",
+    gap: 10,
+    marginBottom: 20,
+  },
+  metaCell: {
+    background: "#fff",
+    border: "1px solid #e5e5e5",
+    borderRadius: 10,
+    padding: "12px 14px",
+  },
+  metaLabel: { fontSize: 11, color: "#888", marginBottom: 4 },
+  metaValue: { fontSize: 13, color: "#333", fontWeight: 500 },
+
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: 500,
+    color: "#555",
+    marginBottom: 8,
+    marginTop: 18,
+  },
+  select: {
+    width: "100%",
+    fontSize: 14,
+    padding: "10px 12px",
+    border: "1px solid #ddd",
+    borderRadius: 8,
+    background: "#fff",
+    color: "#222",
+    cursor: "pointer",
+  },
+
+  questionBody: {
+    background: "#fff",
+    border: "1px solid #e5e5e5",
+    borderRadius: 10,
+    padding: "12px 14px",
+    marginTop: 10,
+  },
+  questionBodyLabel: { fontSize: 11, color: "#888", marginBottom: 4 },
+  questionBodyText: { fontSize: 13, color: "#333", whiteSpace: "pre-wrap" },
+
+  replayBox: {
+    background: "#fff",
+    border: "1px solid #e5e5e5",
+    borderRadius: 10,
+    padding: "16px 18px",
+    minHeight: 140,
+  },
+  subjectiveArea: {
+    fontSize: 15,
+    color: "#222",
+    lineHeight: 1.7,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  },
+  typingSegment: {
+    color: "#222",
+  },
+  pasteSegment: {
+    background: "#fff1f0",
+    color: "#c0392b",
+    padding: "0 2px",
+    borderRadius: 3,
+    fontWeight: 500,
+  },
+  cursor: {
+    color: "#185FA5",
+    fontWeight: 600,
+    marginLeft: 1,
+    animation: "blink 1s steps(2, start) infinite",
+  },
+  placeholder: { fontSize: 13, color: "#aaa" },
+
+  mcArea: {},
+  mcList: { listStyle: "none", padding: 0, margin: 0 },
+  mcItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "8px 10px",
+    borderBottom: "1px solid #f0f0f0",
+    fontSize: 13,
+    color: "#333",
+  },
+  mcItemSuspicious: {
+    background: "#fff1f0",
+    color: "#c0392b",
+    fontWeight: 500,
+  },
+  mcTime: {
+    fontFamily: '"SF Mono", "Fira Code", monospace',
+    color: "#888",
+    fontSize: 12,
+    minWidth: 56,
+  },
+  mcChange: { flex: 1 },
+  suspiciousTag: {
+    fontSize: 11,
+    background: "#e24b4a",
+    color: "#fff",
+    padding: "2px 8px",
+    borderRadius: 4,
+  },
+
+  timelineWrap: {
+    background: "#fff",
+    border: "1px solid #e5e5e5",
+    borderRadius: 10,
+    padding: "16px 18px",
+  },
+  timelineRail: {
+    position: "relative",
+    width: "100%",
+    height: 28,
+    background: "transparent",
+    cursor: "pointer",
+    borderRadius: 6,
+    overflow: "hidden",
+  },
+  timelineBase: {
+    position: "absolute",
+    inset: 0,
+    background: "#dcdcdc",
+    borderRadius: 6,
+  },
+  timelineActive: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    background: "#185FA5",
+    opacity: 0.85,
+  },
+  timelineVisibility: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    background: "#e24b4a",
+    opacity: 0.95,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: 500,
+  },
+  timelineVisibilityLabel: {
+    pointerEvents: "none",
+    fontFamily: '"SF Mono", "Fira Code", monospace',
+  },
+  timelineHandle: {
+    position: "absolute",
+    top: -4,
+    bottom: -4,
+    width: 3,
+    background: "#222",
+    borderRadius: 2,
+    transform: "translateX(-50%)",
+    pointerEvents: "none",
+  },
+  timelineClocks: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 10,
+    fontSize: 12,
+    color: "#666",
+    fontFamily: '"SF Mono", "Fira Code", monospace',
+  },
+  timelineLegend: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    fontFamily:
+      '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontSize: 11,
+    color: "#666",
+  },
+  legendDot: (color) => ({
+    display: "inline-block",
+    width: 10,
+    height: 10,
+    background: color,
+    borderRadius: 2,
+    marginRight: 4,
+    marginLeft: 8,
+    verticalAlign: "middle",
+  }),
+
+  controls: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 14,
+    background: "#fff",
+    border: "1px solid #e5e5e5",
+    borderRadius: 10,
+    padding: "12px 14px",
+  },
+  playBtn: {
+    fontSize: 13,
+    padding: "8px 18px",
+    border: "none",
+    borderRadius: 8,
+    background: "#185FA5",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 500,
+    minWidth: 110,
+  },
+  speedGroup: { display: "flex", gap: 4, marginLeft: 8 },
+  speedBtn: {
+    fontSize: 12,
+    padding: "6px 12px",
+    border: "1px solid #ddd",
+    borderRadius: 6,
+    background: "#fff",
+    color: "#666",
+    cursor: "pointer",
+    fontWeight: 500,
+  },
+  speedBtnActive: {
+    background: "#185FA5",
+    color: "#fff",
+    borderColor: "#185FA5",
+  },
+  resetBtn: {
+    fontSize: 12,
+    padding: "6px 14px",
+    border: "1px solid #ddd",
+    borderRadius: 6,
+    background: "#fff",
+    color: "#666",
+    cursor: "pointer",
+    fontWeight: 500,
+    marginLeft: "auto",
+  },
+  backBtn: {
+    fontSize: 12,
+    padding: "6px 14px",
+    border: "1px solid #ddd",
+    borderRadius: 6,
+    background: "#fff",
+    color: "#666",
+    cursor: "pointer",
+  },
+  emptyState: { textAlign: "center", padding: "60px 20px" },
+  emptyText: { fontSize: 15, color: "#666", marginBottom: 16 },
+};
