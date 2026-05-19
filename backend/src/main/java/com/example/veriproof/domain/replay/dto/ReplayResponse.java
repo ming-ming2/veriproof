@@ -29,7 +29,15 @@ public record ReplayResponse(
             String questionType,
             String body,
             Integer displayOrder,
-            Integer points
+            Integer points,
+            List<ChoiceMeta> choices   // 객관식일 때만 채워짐. 프론트가 displayOrder로 "1번/2번" 라벨링.
+    ) {}
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record ChoiceMeta(
+            Long id,
+            String body,
+            Integer displayOrder
     ) {}
 
     @JsonInclude(JsonInclude.Include.NON_NULL)

@@ -68,7 +68,11 @@ public class ReplayService {
                         q.getQuestionType().name(),
                         q.getBody(),
                         q.getDisplayOrder(),
-                        q.getPoints()))
+                        q.getPoints(),
+                        q.getChoices().isEmpty() ? null : q.getChoices().stream()
+                                .sorted(Comparator.comparingInt(c -> c.getDisplayOrder()))
+                                .map(c -> new ReplayResponse.ChoiceMeta(c.getId(), c.getBody(), c.getDisplayOrder()))
+                                .toList()))
                 .toList();
 
         List<ReplayResponse.TimelineItem> timeline = eventLogRepository
