@@ -1,0 +1,208 @@
+package com.example.veriproof.domain.proctor.service;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.veriproof.domain.event.repository.EventLogRepository;
+import com.example.veriproof.domain.exam.entity.Exam;
+import com.example.veriproof.domain.exam.entity.ExamSession;
+import com.example.veriproof.domain.exam.repository.ExamRepository;
+import com.example.veriproof.domain.exam.repository.ExamSessionRepository;
+import com.example.veriproof.domain.proctor.dto.*;
+import com.example.veriproof.global.exception.CustomException;
+import com.example.veriproof.global.exception.ErrorCode;
+import com.example.veriproof.infra.redis.*;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.OffsetDateTime;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+@Transactional(readOnly = true)
+public class ProctorService {
+
+    private final ExamRepository examRepository;
+    private final ExamSessionRepository examSessionRepository;
+    private final EventLogRepository eventLogRepository;
+
+    private final StringRedisTemplate stringRedisTemplate;
+    private final ObjectMapper objectMapper;
+
+    private final ActiveSessionStore activeSessionStore;
+    private final AttentionStore attentionStore;
+
+    /**
+     * 백로그 16: 대시보드 메타 정보 조회
+     */
+    public ExamDashboardMetaResponse getDashboardMeta(UUID proctorToken) {
+        Exam exam = examRepository.findByProctorToken(proctorToken)
+                .orElseThrow(() -> new CustomException(ErrorCode.PROCTOR_TOKEN_INVALID));
+
+        Map<Object, Object> activeSessions = activeSessionStore.getAllActiveSessions(exam.getId());
+
+        return ExamDashboardMetaResponse.builder()
+                .examId(exam.getId())
+                .title(exam.getTitle())
+                .startsAt(exam.getStartsAt())
+                .endsAt(exam.getEndsAt())
+                .rosterCount(exam.getRosters() != null ? exam.getRosters().size() : 0)
+                .activeCount(activeSessions.size())
+                .build();
+    }
+
+    /**
+     * 백로그 16 & 17: 학생 카드 리스트 조회
+     */
+    public List<ProctorStudentCardResponse> getStudentCards(UUID proctorToken, String sortBy) {
+        Exam exam = examRepository.findByProctorToken(proctorToken)
+                .orElseThrow(() -> new CustomException(ErrorCode.PROCTOR_TOKEN_INVALID));
+
+        List<ActiveSessionInfo> activeInfos = activeSessionStore.getActiveSessionInfos(exam.getId());
+        List<ProctorStudentCardResponse> cards = new ArrayList<>();
+
+        for (ActiveSessionInfo info : activeInfos) {
+            // 🚨 기존 AttentionStore 스펙에 맞춰 String을 UUID로 변환하여 전달
+            UUID targetSessionUuid = UUID.fromString(info.sessionUuid());
+            double score = attentionStore.getScore(exam.getId(), targetSessionUuid);
+
+            cards.add(ProctorStudentCardResponse.builder()
+                    .sessionUuid(targetSessionUuid)
+                    .studentNumber(info.studentNumber())
+                    .studentName(info.studentName())
+                    .currentQuestionId(info.currentQuestionId())
+                    .lastActivityAt(OffsetDateTime.parse(info.lastActivityAt()))
+                    .attentionScore(score)
+                    .attentionLevel(determineAttentionLevel(score))
+                    .status("IN_PROGRESS")
+                    .build());
+        }
+
+        if ("studentNumber".equalsIgnoreCase(sortBy)) {
+            cards.sort(Comparator.comparing(ProctorStudentCardResponse::getStudentNumber));
+        } else {
+            cards.sort(Comparator.comparing(ProctorStudentCardResponse::getAttentionScore).reversed());
+        }
+
+        return cards;
+    }
+
+    /**
+     * 백로그 17: 우측 학생 상세 패널 통합 조회
+     */
+    public ProctorStudentDetailResponse getStudentDetail(UUID proctorToken, UUID sessionUuid) {
+        Exam exam = examRepository.findByProctorToken(proctorToken)
+                .orElseThrow(() -> new CustomException(ErrorCode.PROCTOR_TOKEN_INVALID));
+
+        ExamSession session = examSessionRepository.findBySessionUuid(sessionUuid)
+                .orElseThrow(() -> new CustomException(ErrorCode.INVALID_SESSION_TOKEN));
+
+        // 1. Redis에서 부정행위 시그널 카운트 조회
+        String signalKey = "session:" + sessionUuid + ":signals";
+        Map<Object, Object> rawSignals = stringRedisTemplate.opsForHash().entries(signalKey);
+        Map<String, Integer> signalCounts = rawSignals.entrySet().stream()
+                .collect(Collectors.toMap(
+                        e -> String.valueOf(e.getKey()),
+                        e -> Integer.valueOf(String.valueOf(e.getValue()))
+                ));
+
+        // 2. DB에서 평균 화면 이탈 지속시간 계산
+        Double rawAvg = eventLogRepository.avgVisibilityDurationMs(session.getId());
+        Long avgDuration = rawAvg != null ? rawAvg.longValue() : 0L;
+
+        // 3. DB에서 최근 이벤트 로그 조회
+        List<ProctorStudentDetailResponse.RecentLogItem> recentLogs = eventLogRepository
+                .findAllByExamSessionIdOrderByOccurredAtDesc(session.getId(), PageRequest.of(0, 20))
+                .stream()
+                .map(log -> ProctorStudentDetailResponse.RecentLogItem.builder()
+                        .type(log.getEventType())
+                        .questionId(log.getQuestion() != null ? log.getQuestion().getId() : null)
+                        .occurredAt(log.getOccurredAt())
+                        .build())
+                .collect(Collectors.toList());
+
+        // 4. Redis에서 현재 작성 중인 답안 초안 조회
+        String draftKey = "session:" + sessionUuid + ":drafts";
+        Map<Object, Object> rawDrafts = stringRedisTemplate.opsForHash().entries(draftKey);
+        List<ProctorStudentDetailResponse.CurrentDraftItem> currentDrafts = new ArrayList<>();
+
+        for (Map.Entry<Object, Object> entry : rawDrafts.entrySet()) {
+            Long qId = Long.valueOf(String.valueOf(entry.getKey()));
+            String draftJson = String.valueOf(entry.getValue());
+            try {
+                Map<String, Object> draftMap = objectMapper.readValue(draftJson, new TypeReference<>() {});
+                String text = draftMap.get("answerText") != null ? String.valueOf(draftMap.get("answerText")) : "";
+
+                currentDrafts.add(ProctorStudentDetailResponse.CurrentDraftItem.builder()
+                        .questionId(qId)
+                        .answerText(text)
+                        .build());
+            } catch (JsonProcessingException e) {
+                log.warn("[Redis 역직렬화 실패] Session: {}, Error: {}", sessionUuid, e.getMessage());
+            }
+        }
+
+        double score = attentionStore.getScore(exam.getId(), sessionUuid);
+
+        return ProctorStudentDetailResponse.builder()
+                .studentNumber(session.getStudentNumber())
+                .studentName(session.getStudentName())
+                .attentionScore(score)
+                .attentionLevel(determineAttentionLevel(score))
+                .signals(signalCounts)
+                .avgVisibilityDurationMs(avgDuration)
+                .recentLogs(recentLogs)
+                .currentDrafts(currentDrafts)
+                .build();
+    }
+
+    /**
+     * 백로그 18: 전체 시험 이벤트 피드
+     */
+    public ExamEventFeedResponse getExamEventFeed(UUID proctorToken, OffsetDateTime since, int limit) {
+        Exam exam = examRepository.findByProctorToken(proctorToken)
+                .orElseThrow(() -> new CustomException(ErrorCode.PROCTOR_TOKEN_INVALID));
+
+        List<EventFeedItemResponse> events = eventLogRepository
+                .findAllByExamIdAndOccurredAtAfterOrderByOccurredAtDesc(exam.getId(), since, PageRequest.of(0, limit))
+                .stream()
+                .map(log -> EventFeedItemResponse.builder()
+                        .id(log.getId())
+                        .sessionUuid(log.getExamSession().getSessionUuid())
+                        .studentNumber(log.getExamSession().getStudentNumber())
+                        .type(log.getEventType())
+                        .questionId(log.getQuestion() != null ? log.getQuestion().getId() : null)
+                        .occurredAt(log.getOccurredAt())
+                        .durationMs(log.getDurationMs() != null ? Long.valueOf(log.getDurationMs()) : null)
+                        .payload(log.getPayload())
+                        .build())
+                .collect(Collectors.toList());
+
+        return ExamEventFeedResponse.builder()
+                .events(events)
+                .build();
+    }
+
+    /**
+     * 감독관 토큰으로 Exam ID를 조회합니다. (SSE 구독용)
+     */
+    public Long getExamIdByToken(UUID proctorToken) {
+        return examRepository.findByProctorToken(proctorToken)
+                .map(Exam::getId)
+                .orElseThrow(() -> new CustomException(ErrorCode.PROCTOR_TOKEN_INVALID));
+    }
+
+    private String determineAttentionLevel(double score) {
+        if (score >= 4.0) return "HIGH";
+        if (score >= 2.0) return "MID";
+        if (score >= 1.0) return "LOW";
+        return "NORMAL";
+    }
+}
