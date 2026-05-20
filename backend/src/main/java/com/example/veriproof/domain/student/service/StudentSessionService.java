@@ -31,6 +31,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import com.example.veriproof.infra.redis.ActiveSessionInfo;
+import com.example.veriproof.infra.redis.ActiveSessionStore;
 
 @Service
 @RequiredArgsConstructor
@@ -43,6 +45,10 @@ public class StudentSessionService {
     private final SessionLockStore sessionLockStore;
     private final AnswerDraftStore answerDraftStore;
     private final AutoGradingService autoGradingService;
+
+    // ActivateSessionStore 추가
+    private final ActiveSessionStore activeSessionStore;
+
 
     /**
      * 6자리 시험 코드로 시험 메타 조회. (백로그 7)
@@ -87,6 +93,21 @@ public class StudentSessionService {
         if (!acquired) {
             throw new CustomException(ErrorCode.CONCURRENT_SESSION);
         }
+
+        // 추가
+        ActiveSessionInfo activeInfo = new ActiveSessionInfo(
+                session.getSessionUuid().toString(),       // sessionUuid
+                session.getStudentNumber(),                // studentNumber
+                session.getStudentName(),                  // studentName
+                null,                                      // currentQuestionId (시작 시점엔 null)
+                OffsetDateTime.now().toString()            // lastActivityAt (String 형태로 저장)
+        );
+
+        activeSessionStore.saveActiveSession(
+                exam.getId(),
+                session.getSessionUuid().toString(),
+                activeInfo
+        );
 
         return buildSessionStartResponse(exam, session);
     }
