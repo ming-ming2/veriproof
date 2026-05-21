@@ -40,7 +40,7 @@ function EventFeed({ events }) {
                 <span style={styles.name}>{ev.studentNumber}</span>
                 <span style={{ ...styles.desc, color: accentColor }}>
                   {label}
-                  {ev.questionId != null && ` · 문항 ${ev.questionId}`}
+                  {ev.questionDisplayOrder != null && ` · 문항 ${ev.questionDisplayOrder}`}
                   {ev.durationMs != null && ` (${(ev.durationMs / 1000).toFixed(1)}초)`}
                 </span>
               </div>

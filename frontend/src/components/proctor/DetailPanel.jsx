@@ -9,6 +9,8 @@ const EVENT_LABEL = {
   CAPTURE_SHORTCUT: '화면 캡처',
   WINDOW_BLUR: '창 포커스 손실',
   SUSPICIOUS_CHOICE_CHANGE: '의심 선택지 변경',
+  CHOICE_CHANGE: '선택지 변경',
+  QUESTION_NAVIGATE: '문항 이동',
 };
 
 export default function DetailPanel({ student, onClose }) {
@@ -72,7 +74,7 @@ export default function DetailPanel({ student, onClose }) {
                   </span>
                   <span style={styles.eventText}>
                     {EVENT_LABEL[ev.type] || ev.type}
-                    {ev.questionId != null && ` (문항 ${ev.questionId})`}
+                    {ev.questionDisplayOrder != null && ` (문항 ${ev.questionDisplayOrder})`}
                     {ev.durationMs != null && (
                       <span style={styles.duration}> {(ev.durationMs / 1000).toFixed(1)}초</span>
                     )}
@@ -87,7 +89,7 @@ export default function DetailPanel({ student, onClose }) {
           <section style={styles.section}>
             <h3 style={styles.sectionTitle}>현재 답안 미리보기</h3>
             <div style={styles.answerBox}>
-              <div style={styles.qLabel}>문항 {currentAnswerPreview.questionId}</div>
+              <div style={styles.qLabel}>문항 {currentAnswerPreview.questionDisplayOrder ?? currentAnswerPreview.questionId}</div>
               {currentAnswerPreview.answerText ? (
                 <p style={styles.answerText}>{currentAnswerPreview.answerText}</p>
               ) : (

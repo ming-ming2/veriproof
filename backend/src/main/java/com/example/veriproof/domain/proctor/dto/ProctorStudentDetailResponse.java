@@ -27,6 +27,7 @@ public class ProctorStudentDetailResponse {
     public static class RecentEventItem {
         private String type;
         private Long questionId;
+        private Integer questionDisplayOrder;
         private OffsetDateTime occurredAt;
         private Integer durationMs;
     }
@@ -36,6 +37,7 @@ public class ProctorStudentDetailResponse {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static class CurrentAnswerPreview {
         private Long questionId;
+        private Integer questionDisplayOrder;
         private String answerText;
         private Set<Long> selectedChoiceIds;
     }

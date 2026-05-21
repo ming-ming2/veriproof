@@ -71,6 +71,19 @@ export function useBehaviorTracker({ sessionToken, getAnswers, getQuestions }) {
     });
   }, []);
 
+  /**
+   * Cursor 위치 기반 편집 이벤트. 재생 시 splice로 재구성하여 중간편집·선택치환·IME 모두 정확.
+   * payload 형식: { pos, removeLen, insert } — text = text.slice(0,pos) + insert + text.slice(pos+removeLen)
+   */
+  const trackEdit = useCallback((questionId, pos, removeLen, insert) => {
+    eventsRef.current.push({
+      type: 'KEYSTROKE',
+      occurredAt: new Date().toISOString(),
+      questionId,
+      payload: { pos, removeLen, insert },
+    });
+  }, []);
+
   const trackChoiceChange = useCallback((questionId, fromChoiceIds, toChoiceIds) => {
     eventsRef.current.push({
       type: 'CHOICE_CHANGE',
@@ -89,5 +102,5 @@ export function useBehaviorTracker({ sessionToken, getAnswers, getQuestions }) {
     });
   }, []);
 
-  return { trackKeystroke, trackChoiceChange, trackNavigation, flushBeforeSubmit: flush };
+  return { trackKeystroke, trackEdit, trackChoiceChange, trackNavigation, flushBeforeSubmit: flush };
 }

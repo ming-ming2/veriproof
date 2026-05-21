@@ -300,6 +300,7 @@ public class EventIngestService {
         data.put("studentNumber", session.getStudentNumber());
         data.put("type", log.getEventType());
         data.put("questionId", log.getQuestion() != null ? log.getQuestion().getId() : null);
+        data.put("questionDisplayOrder", log.getQuestion() != null ? log.getQuestion().getDisplayOrder() : null);
         data.put("occurredAt", log.getOccurredAt().toString());
         if (durationMs != null) {
             data.put("durationMs", durationMs);

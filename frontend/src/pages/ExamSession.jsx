@@ -6,6 +6,25 @@ import { useExamGuard } from '../hooks/useExamGuard';
 import { useExamWebsocket } from '../hooks/useExamWebsocket';
 import { useBehaviorTracker } from '../hooks/useBehaviorTracker';
 
+// 디버그 로거 — localStorage.setItem('examDebug', '1') 로 켬.
+// console + sessionStorage('examDebugLog')에 raw 이벤트를 누적 기록한다.
+const examDebugEnabled = () =>
+  typeof window !== 'undefined' && window.localStorage?.getItem('examDebug') === '1';
+const debugLog = (kind, data) => {
+  if (!examDebugEnabled()) return;
+  const entry = { t: new Date().toISOString(), kind, ...data };
+  // 한 줄 요약 로깅 (펼치면 객체 전부 보임)
+  // eslint-disable-next-line no-console
+  console.log(`[examDebug] ${kind}`, entry);
+  try {
+    const key = 'examDebugLog';
+    const arr = JSON.parse(window.sessionStorage.getItem(key) || '[]');
+    arr.push(entry);
+    if (arr.length > 5000) arr.splice(0, arr.length - 5000);
+    window.sessionStorage.setItem(key, JSON.stringify(arr));
+  } catch {}
+};
+
 export default function ExamSession() {
   const navigate = useNavigate();
   const { requestFullscreen } = useFullscreen();
@@ -21,7 +40,7 @@ export default function ExamSession() {
   const { setCurrentQuestionId, deactivate: deactivateWs } = useExamWebsocket({
     sessionToken: sessionTokenRef.current,
   });
-  const { trackKeystroke, trackChoiceChange, trackNavigation, flushBeforeSubmit } = useBehaviorTracker({
+  const { trackEdit, trackChoiceChange, trackNavigation, flushBeforeSubmit } = useBehaviorTracker({
     sessionToken: sessionTokenRef.current,
     getAnswers,
     getQuestions,
@@ -39,8 +58,14 @@ export default function ExamSession() {
   const saveTimers = useRef({});
   const hasSubmitted = useRef(false);
   const isComposingRef = useRef(false);
-  // IME 합성 시작 시점의 선택 영역 길이 — 합성 종료 후 그만큼을 먼저 delete 이벤트로 기록한다.
-  const compositionSelLenRef = useRef(0);
+  // IME 합성 시작 시점의 cursor 위치와 선택 영역 — 합성 종료 시 splice 위치로 사용.
+  const compositionStartRef = useRef({ pos: 0, selLen: 0 });
+  // textarea 네이티브 ref — React의 onBeforeInput JSX 핸들러는 delete 계열 inputType을 안 잡으므로
+  // 네이티브 'beforeinput' 이벤트를 직접 바인딩해야 한다.
+  const textareaRef = useRef(null);
+  // 핸들러에서 최신 trackEdit / currentQ에 접근하기 위한 ref (closure 회피)
+  const trackEditRef = useRef(null);
+  const currentQRef = useRef(null);
   const deactivateRef = useRef(deactivate);
   deactivateRef.current = deactivate;
   const deactivateWsRef = useRef(deactivateWs);
@@ -154,6 +179,56 @@ export default function ExamSession() {
     if (q?.id) setCurrentQuestionIdRef.current(q.id);
   }, [currentIndex, sessionInfo]);
 
+  // ref 최신값 동기화 (네이티브 beforeinput 핸들러용)
+  useEffect(() => {
+    trackEditRef.current = trackEdit;
+  }, [trackEdit]);
+
+  // 네이티브 'beforeinput' 직접 바인딩 — React JSX onBeforeInput은 delete 계열을 안 잡으므로 필수.
+  // 매 렌더마다 attach/detach 하기 부담스러우니 ref만 의존성으로 두고, 안에서는 ref 값으로 최신 상태 조회.
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const handler = (e) => {
+      const inputType = e.inputType;
+      const selStart = ta.selectionStart ?? 0;
+      const selEnd = ta.selectionEnd ?? 0;
+      let rangeInfo = null;
+      if (typeof e.getTargetRanges === 'function') {
+        const ranges = e.getTargetRanges();
+        if (ranges && ranges.length > 0) {
+          rangeInfo = { start: ranges[0].startOffset, end: ranges[0].endOffset };
+        }
+      }
+      debugLog('native-beforeinput', { inputType, data: e.data, selStart, selEnd, rangeInfo });
+      if (!inputType || !inputType.startsWith('delete')) return;
+
+      // CUT은 별도 채널 없으니 여기서 잡아도 되긴 하는데, replay 정확도 위해 일단 동일하게 처리
+      let pos = selStart;
+      let removeLen = Math.abs(selEnd - selStart);
+      if (rangeInfo) {
+        pos = rangeInfo.start;
+        removeLen = Math.max(0, rangeInfo.end - rangeInfo.start);
+      }
+      if (removeLen === 0) {
+        if (inputType === 'deleteContentBackward' && pos > 0) {
+          pos = pos - 1; removeLen = 1;
+        } else if (inputType === 'deleteContentForward') {
+          removeLen = 1;
+        } else if (inputType.startsWith('delete') && pos > 0) {
+          // word/line backward delete fallback — getTargetRanges가 없을 때 최소 1자라도
+          pos = pos - 1; removeLen = 1;
+        }
+      }
+      if (removeLen > 0) {
+        const qid = currentQRef.current?.id;
+        if (qid != null) trackEditRef.current?.(qid, pos, removeLen, '');
+      }
+    };
+    ta.addEventListener('beforeinput', handler);
+    return () => ta.removeEventListener('beforeinput', handler);
+  }, [sessionInfo, currentIndex]);  // 문항 전환 시 textarea가 unmount/remount될 수 있어 재바인딩
+
   // 문항 이동 + 네비게이션 추적
   const navigateTo = useCallback((newIndex) => {
     if (!sessionInfo?.questions) return;
@@ -229,6 +304,7 @@ export default function ExamSession() {
 
   const questions = sessionInfo?.questions || [];
   const currentQ = questions[currentIndex];
+  currentQRef.current = currentQ;
   const currentAnswer = answers[currentQ?.id] || { answerText: '', selectedChoiceIds: [] };
   const isWarningTime = timeLeft > 0 && timeLeft <= 300;
 
@@ -304,55 +380,50 @@ export default function ExamSession() {
                   value={currentAnswer.answerText}
                   onChange={(e) => handleTextChange(currentQ.id, e.target.value)}
                   onKeyDown={(e) => {
-                    // IME 합성 중에는 onKeyDown으로 잡지 않는다 (한글 등). e.key가 'Process'인 경우도 동일.
-                    if (isComposingRef.current || e.key === 'Process') return;
                     const ta = e.currentTarget;
-                    const selLen = Math.abs((ta.selectionEnd ?? 0) - (ta.selectionStart ?? 0));
-                    if (e.ctrlKey || e.metaKey) {
-                      // Ctrl/Cmd 조합인데 선택 영역이 있는 상태로 Backspace/Delete를 누르면
-                      // 브라우저는 그 선택분을 한 번에 삭제한다. 그 길이만큼 delete 이벤트 발행.
-                      // (Ctrl+A 후 Ctrl 떼지 않고 바로 Backspace 누르는 흔한 패턴)
-                      if ((e.key === 'Backspace' || e.key === 'Delete') && selLen > 0) {
-                        for (let i = 0; i < selLen; i++) {
-                          trackKeystroke(currentQ.id, 'Backspace', 'delete');
-                        }
-                      }
-                      // 그 외 Ctrl/Cmd 조합 (Ctrl+A, Ctrl+V, Ctrl+X 등)은 글자 입력이 아니므로 스킵
-                      return;
-                    }
-                    if (e.key === 'Backspace' || e.key === 'Delete') {
-                      const count = selLen > 0 ? selLen : 1;
-                      for (let i = 0; i < count; i++) {
-                        trackKeystroke(currentQ.id, e.key, 'delete');
-                      }
-                    } else if (e.key === 'Enter') {
-                      for (let i = 0; i < selLen; i++) {
-                        trackKeystroke(currentQ.id, 'Backspace', 'delete');
-                      }
-                      trackKeystroke(currentQ.id, '\n', 'insert');
+                    const selStart = ta.selectionStart ?? 0;
+                    const selEnd = ta.selectionEnd ?? 0;
+                    const selLen = Math.abs(selEnd - selStart);
+                    debugLog('keydown', {
+                      key: e.key, code: e.code,
+                      ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey, alt: e.altKey,
+                      isComposing: isComposingRef.current,
+                      selStart, selEnd, repeat: e.repeat,
+                    });
+                    // IME 합성 중에는 onKeyDown으로 잡지 않는다.
+                    if (isComposingRef.current || e.key === 'Process') return;
+                    // 삭제 동작(Backspace/Delete, Cmd/Ctrl+Backspace의 단어/줄 삭제 포함)은
+                    // onBeforeInput에서 inputType + getTargetRanges()로 정확히 잡으므로 여기선 손대지 않는다.
+                    if (e.key === 'Backspace' || e.key === 'Delete') return;
+                    // 그 외 Ctrl/Cmd 조합(Ctrl+A, Ctrl+V, Ctrl+X 등)은 글자 입력이 아니므로 스킵.
+                    if (e.ctrlKey || e.metaKey) return;
+                    if (e.key === 'Enter') {
+                      trackEdit(currentQ.id, selStart, selLen, '\n');
                     } else if (e.key.length === 1) {
-                      for (let i = 0; i < selLen; i++) {
-                        trackKeystroke(currentQ.id, 'Backspace', 'delete');
-                      }
-                      trackKeystroke(currentQ.id, e.key, 'insert');
+                      trackEdit(currentQ.id, selStart, selLen, e.key);
                     }
                   }}
+                  ref={textareaRef}
                   onCompositionStart={(e) => {
                     isComposingRef.current = true;
                     const ta = e.currentTarget;
-                    compositionSelLenRef.current = Math.abs((ta.selectionEnd ?? 0) - (ta.selectionStart ?? 0));
+                    const selStart = ta.selectionStart ?? 0;
+                    const selEnd = ta.selectionEnd ?? 0;
+                    compositionStartRef.current = {
+                      pos: selStart,
+                      selLen: Math.abs(selEnd - selStart),
+                    };
+                    debugLog('compositionstart', { selStart, selEnd, data: e.data });
+                  }}
+                  onCompositionUpdate={(e) => {
+                    debugLog('compositionupdate', { data: e.data });
                   }}
                   onCompositionEnd={(e) => {
                     isComposingRef.current = false;
-                    const selLen = compositionSelLenRef.current || 0;
-                    compositionSelLenRef.current = 0;
-                    for (let i = 0; i < selLen; i++) {
-                      trackKeystroke(currentQ.id, 'Backspace', 'delete');
-                    }
-                    const text = e.data || '';
-                    for (const ch of text) {
-                      trackKeystroke(currentQ.id, ch, 'insert');
-                    }
+                    const { pos, selLen } = compositionStartRef.current;
+                    compositionStartRef.current = { pos: 0, selLen: 0 };
+                    debugLog('compositionend', { pos, selLen, data: e.data });
+                    trackEdit(currentQ.id, pos, selLen, e.data || '');
                   }}
                 />
               ) : (

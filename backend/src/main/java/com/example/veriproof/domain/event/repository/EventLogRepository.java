@@ -23,8 +23,34 @@ public interface EventLogRepository extends JpaRepository<EventLog, Long> {
     List<EventLog> findAllByExamIdAndOccurredAtAfterOrderByOccurredAtDesc(
             Long examId, OffsetDateTime since, Pageable pageable);
 
+    /**
+     * 감독관 피드 / 학생 상세 — 부정행위 의심 이벤트만 (KEYSTROKE/CHOICE_CHANGE/QUESTION_NAVIGATE 제외).
+     */
+    @Query("""
+            SELECT e FROM EventLog e
+             WHERE e.exam.id = :examId
+               AND e.occurredAt > :since
+               AND e.eventType IN :types
+             ORDER BY e.occurredAt DESC
+            """)
+    List<EventLog> findCheatingEventsByExam(@Param("examId") Long examId,
+                                            @Param("since") OffsetDateTime since,
+                                            @Param("types") java.util.Collection<String> types,
+                                            Pageable pageable);
+
     /** 학생 상세 패널(백로그 17)의 최근 이벤트 목록. */
     List<EventLog> findAllByExamSessionIdOrderByOccurredAtDesc(Long examSessionId, Pageable pageable);
+
+    /** 학생 상세 — 부정행위 의심 이벤트만 시간 역순. */
+    @Query("""
+            SELECT e FROM EventLog e
+             WHERE e.examSession.id = :sessionId
+               AND e.eventType IN :types
+             ORDER BY e.occurredAt DESC
+            """)
+    List<EventLog> findCheatingEventsBySession(@Param("sessionId") Long sessionId,
+                                               @Param("types") java.util.Collection<String> types,
+                                               Pageable pageable);
 
     /**
      * VISIBILITY_RESTORED / FULLSCREEN_ENTER 도착 시 페어링 대상 LOST/EXIT 조회.

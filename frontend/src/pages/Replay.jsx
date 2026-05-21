@@ -127,42 +127,60 @@ const isSuspicious = (timeline, choiceChangeEvent) => {
   );
 };
 
-// 주관식: currentTime 기준의 텍스트 세그먼트 ({text, paste:boolean}[])
+// 주관식: currentTime 기준의 텍스트 세그먼트 ({text, paste:boolean}[]).
+// 모든 편집을 (pos, removeLen, insert) 형태로 splice 재현 → 중간편집·선택치환·IME 정확.
+// 옛 포맷({key, action})은 끝-편집으로 fallback.
 const reconstructText = (events, currentTime) => {
-  const segments = []; // [{text, paste}]
-  const pushChar = (ch) => {
-    const last = segments[segments.length - 1];
-    if (last && !last.paste) last.text += ch;
-    else segments.push({ text: ch, paste: false });
+  let text = "";
+  let pasteFlags = []; // pasteFlags[i] = true if text[i] came from a paste
+
+  const applyEdit = (pos, removeLen, insert, isPaste) => {
+    // 범위 안전 보정
+    pos = Math.max(0, Math.min(pos, text.length));
+    removeLen = Math.max(0, Math.min(removeLen, text.length - pos));
+    text = text.slice(0, pos) + insert + text.slice(pos + removeLen);
+    const insertFlags = new Array(insert.length).fill(isPaste);
+    pasteFlags = [
+      ...pasteFlags.slice(0, pos),
+      ...insertFlags,
+      ...pasteFlags.slice(pos + removeLen),
+    ];
   };
-  const popChar = () => {
-    const last = segments[segments.length - 1];
-    if (!last) return;
-    if (last.paste) {
-      // paste 블록은 한 번에 삭제되지 않으므로, 한 글자만 제거
-      last.text = last.text.slice(0, -1);
-      if (!last.text) segments.pop();
-    } else {
-      last.text = last.text.slice(0, -1);
-      if (!last.text) segments.pop();
-    }
-  };
+
   events
     .filter((e) => e.t <= currentTime)
     .forEach((e) => {
       if (e.type === "KEYSTROKE") {
-        const key = e.payload?.key ?? "";
-        const action = e.payload?.action ?? "insert";
-        if (action === "insert") pushChar(key);
-        else if (action === "delete") popChar();
+        const p = e.payload || {};
+        if (typeof p.pos === "number") {
+          // 신 포맷: cursor 위치 기반
+          applyEdit(p.pos, p.removeLen ?? 0, p.insert ?? "", false);
+        } else {
+          // 구 포맷 fallback: 끝-편집
+          const action = p.action ?? "insert";
+          const key = p.key ?? "";
+          if (action === "insert") applyEdit(text.length, 0, key, false);
+          else if (action === "delete" && text.length > 0) applyEdit(text.length - 1, 1, "", false);
+        }
       } else if (e.type === "PASTE") {
-        // paste 시점에 선택 영역이 있었다면 그 길이만큼 먼저 popChar (덮어쓰기 재현)
-        const selectedLength = e.payload?.selectedLength ?? 0;
-        for (let i = 0; i < selectedLength; i++) popChar();
         const preview = e.payload?.preview ?? "";
-        segments.push({ text: preview, paste: true });
+        const selectedLength = e.payload?.selectedLength ?? 0;
+        const pos = typeof e.payload?.pos === "number" ? e.payload.pos : text.length;
+        applyEdit(pos, selectedLength, preview, true);
       }
     });
+
+  // pasteFlags를 기준으로 연속된 같은 flag를 묶어 세그먼트화
+  const segments = [];
+  if (text.length === 0) return segments;
+  let i = 0;
+  while (i < text.length) {
+    const flag = pasteFlags[i] ?? false;
+    let j = i;
+    while (j < text.length && (pasteFlags[j] ?? false) === flag) j++;
+    segments.push({ text: text.slice(i, j), paste: flag });
+    i = j;
+  }
   return segments;
 };
 

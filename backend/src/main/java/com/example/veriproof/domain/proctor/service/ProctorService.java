@@ -8,8 +8,10 @@ import com.example.veriproof.domain.event.repository.AnswerSnapshotRepository;
 import com.example.veriproof.domain.event.repository.EventLogRepository;
 import com.example.veriproof.domain.exam.entity.Exam;
 import com.example.veriproof.domain.exam.entity.ExamSession;
+import com.example.veriproof.domain.exam.entity.Question;
 import com.example.veriproof.domain.exam.repository.ExamRepository;
 import com.example.veriproof.domain.exam.repository.ExamSessionRepository;
+import com.example.veriproof.domain.exam.repository.QuestionRepository;
 import com.example.veriproof.domain.proctor.dto.*;
 import com.example.veriproof.global.exception.CustomException;
 import com.example.veriproof.global.exception.ErrorCode;
@@ -35,12 +37,41 @@ public class ProctorService {
     private final ExamSessionRepository examSessionRepository;
     private final EventLogRepository eventLogRepository;
     private final AnswerSnapshotRepository answerSnapshotRepository;
+    private final QuestionRepository questionRepository;
 
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
 
     private final ActiveSessionStore activeSessionStore;
     private final AttentionStore attentionStore;
+
+    /**
+     * 메인 이벤트 피드에 노출할 부정행위 의심 이벤트만.
+     * 일반 입력/내비게이션(KEYSTROKE/CHOICE_CHANGE/QUESTION_NAVIGATE)은 제외.
+     */
+    private static final Set<String> CHEATING_EVENT_TYPES = Set.of(
+            "PASTE",
+            "VISIBILITY_LOST", "VISIBILITY_RESTORED",
+            "FULLSCREEN_EXIT", "FULLSCREEN_ENTER",
+            "CAPTURE_SHORTCUT",
+            "WINDOW_BLUR",
+            "SUSPICIOUS_CHOICE_CHANGE"
+    );
+
+    /**
+     * 학생 상세 패널의 최근 이벤트. 컨텍스트로 CHOICE_CHANGE/QUESTION_NAVIGATE는 함께 노출하고
+     * 노이즈인 KEYSTROKE만 제외한다.
+     */
+    private static final Set<String> DETAIL_EVENT_TYPES = Set.of(
+            "PASTE",
+            "VISIBILITY_LOST", "VISIBILITY_RESTORED",
+            "FULLSCREEN_EXIT", "FULLSCREEN_ENTER",
+            "CAPTURE_SHORTCUT",
+            "WINDOW_BLUR",
+            "SUSPICIOUS_CHOICE_CHANGE",
+            "CHOICE_CHANGE",
+            "QUESTION_NAVIGATE"
+    );
 
     /**
      * 백로그 16: 대시보드 메타 정보 조회
@@ -123,13 +154,14 @@ public class ProctorService {
         Double rawAvg = eventLogRepository.avgVisibilityDurationMs(session.getId());
         Long avgDuration = rawAvg != null ? rawAvg.longValue() : 0L;
 
-        // 3. DB에서 최근 이벤트 로그 조회 (durationMs 포함)
+        // 3. DB에서 최근 이벤트 조회 — KEYSTROKE만 제외하고 CHOICE_CHANGE/QUESTION_NAVIGATE 등 컨텍스트는 포함
         List<ProctorStudentDetailResponse.RecentEventItem> recentEvents = eventLogRepository
-                .findAllByExamSessionIdOrderByOccurredAtDesc(session.getId(), PageRequest.of(0, 20))
+                .findCheatingEventsBySession(session.getId(), DETAIL_EVENT_TYPES, PageRequest.of(0, 20))
                 .stream()
                 .map(log -> ProctorStudentDetailResponse.RecentEventItem.builder()
                         .type(log.getEventType())
                         .questionId(log.getQuestion() != null ? log.getQuestion().getId() : null)
+                        .questionDisplayOrder(log.getQuestion() != null ? log.getQuestion().getDisplayOrder() : null)
                         .occurredAt(log.getOccurredAt())
                         .durationMs(log.getDurationMs())
                         .build())
@@ -140,6 +172,7 @@ public class ProctorService {
                 answerSnapshotRepository.findFirstByExamSessionIdOrderByCapturedAtDesc(session.getId())
                         .map(snap -> ProctorStudentDetailResponse.CurrentAnswerPreview.builder()
                                 .questionId(snap.getQuestion().getId())
+                                .questionDisplayOrder(snap.getQuestion().getDisplayOrder())
                                 .answerText(snap.getAnswerText())
                                 .selectedChoiceIds(snap.getSelectedChoiceIds() != null
                                         ? new java.util.LinkedHashSet<>(java.util.Arrays.asList(snap.getSelectedChoiceIds()))
@@ -169,11 +202,13 @@ public class ProctorService {
 
         Map.Entry<Object, Object> entry = rawDrafts.entrySet().iterator().next();
         Long qId = Long.valueOf(String.valueOf(entry.getKey()));
+        Integer displayOrder = questionRepository.findById(qId).map(Question::getDisplayOrder).orElse(null);
         try {
             Map<String, Object> draftMap = objectMapper.readValue(String.valueOf(entry.getValue()), new TypeReference<>() {});
             String text = draftMap.get("answerText") != null ? String.valueOf(draftMap.get("answerText")) : null;
             return ProctorStudentDetailResponse.CurrentAnswerPreview.builder()
                     .questionId(qId)
+                    .questionDisplayOrder(displayOrder)
                     .answerText(text)
                     .build();
         } catch (JsonProcessingException e) {
@@ -204,7 +239,7 @@ public class ProctorService {
                 .orElseThrow(() -> new CustomException(ErrorCode.PROCTOR_TOKEN_INVALID));
 
         List<EventFeedItemResponse> events = eventLogRepository
-                .findAllByExamIdAndOccurredAtAfterOrderByOccurredAtDesc(exam.getId(), since, PageRequest.of(0, limit))
+                .findCheatingEventsByExam(exam.getId(), since, CHEATING_EVENT_TYPES, PageRequest.of(0, limit))
                 .stream()
                 .map(log -> EventFeedItemResponse.builder()
                         .id(log.getId())
@@ -212,6 +247,7 @@ public class ProctorService {
                         .studentNumber(log.getExamSession().getStudentNumber())
                         .type(log.getEventType())
                         .questionId(log.getQuestion() != null ? log.getQuestion().getId() : null)
+                        .questionDisplayOrder(log.getQuestion() != null ? log.getQuestion().getDisplayOrder() : null)
                         .occurredAt(log.getOccurredAt())
                         .durationMs(log.getDurationMs() != null ? Long.valueOf(log.getDurationMs()) : null)
                         .payload(log.getPayload())

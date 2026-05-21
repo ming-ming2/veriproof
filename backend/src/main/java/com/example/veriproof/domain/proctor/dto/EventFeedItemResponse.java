@@ -13,6 +13,7 @@ public class EventFeedItemResponse {
     private String studentNumber;
     private String type;
     private Long questionId;
+    private Integer questionDisplayOrder;
     private OffsetDateTime occurredAt;
     private Long durationMs;
     private Object payload;
