@@ -30,7 +30,7 @@ export default function ProctorDashboard() {
           activeCount: m.activeCount,
         });
         setStudents(studentsRes.data.data || []);
-        setFeedEvents(feedRes.data.data || []);
+        setFeedEvents(feedRes.data.data?.events || []);
       })
       .catch((err) => {
         setError(err.response?.data?.error?.code || 'LOAD_ERROR');

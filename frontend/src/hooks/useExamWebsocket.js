@@ -42,9 +42,17 @@ export function useExamWebsocket({ sessionToken }) {
 
     const handlePaste = (e) => {
       const text = e.clipboardData?.getData('text') || '';
+      // paste 시점에 선택 영역이 있으면 그 길이만큼이 함께 덮어써진다.
+      // replay 복원 시 이 값으로 paste 블록 앞부분을 먼저 제거한다.
+      const tgt = e.target;
+      const selectedLength =
+        tgt && typeof tgt.selectionStart === 'number' && typeof tgt.selectionEnd === 'number'
+          ? Math.abs(tgt.selectionEnd - tgt.selectionStart)
+          : 0;
       postEvent('PASTE', {
         length: text.length,
         preview: text.slice(0, 50),
+        selectedLength,
       });
     };
 

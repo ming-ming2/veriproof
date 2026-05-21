@@ -22,8 +22,9 @@ const computeDuration = (data) => {
   let maxT = 0;
   (data.timeline || []).forEach((e) => {
     if (typeof e.t === "number" && e.t > maxT) maxT = e.t;
-    if (e.payload && typeof e.payload.durationMs === "number") {
-      maxT = Math.max(maxT, e.t + e.payload.durationMs);
+    // durationMs는 TimelineItem의 별도 필드 (e.payload가 아님)
+    if (typeof e.durationMs === "number") {
+      maxT = Math.max(maxT, e.t + e.durationMs);
     }
   });
   (data.snapshots || []).forEach((s) => {
@@ -44,61 +45,77 @@ const computeActiveRanges = (timeline, totalDuration, selectedQid, fallbackQid) 
     .slice()
     .sort((a, b) => a.t - b.t);
 
-  // QUESTION_NAVIGATE 가 하나도 없으면 fallbackQid 가 첫 문항이라 가정
   if (navs.length === 0) {
     return fallbackQid === selectedQid ? [{ from: 0, to: totalDuration }] : [];
   }
 
-  const ranges = [];
-  // 첫 nav 이전 구간: 알 수 없음 → 비활성으로 두되 첫 nav 의 questionId 가 selected 이면 0부터 시작
-  let currentQid = navs[0].payload?.toQuestionId ?? navs[0].questionId;
+  // t=0부터 첫 nav 전까지는 첫 nav의 fromQuestionId(= 사용자가 시작한 문항)에 매핑되어야 한다.
+  // fromQuestionId가 없으면 fallbackQid(첫 문항)로 본다.
+  let currentQid = navs[0].payload?.fromQuestionId ?? fallbackQid;
   let currentStart = 0;
 
-  for (let i = 1; i < navs.length; i++) {
-    const e = navs[i];
+  const ranges = [];
+  for (const e of navs) {
     if (currentQid === selectedQid) {
       ranges.push({ from: currentStart, to: e.t });
     }
     currentQid = e.payload?.toQuestionId ?? e.questionId;
     currentStart = e.t;
   }
-  // 마지막 nav 이후
+  // 마지막 nav 이후 ~ 종료
   if (currentQid === selectedQid) {
     ranges.push({ from: currentStart, to: totalDuration });
   }
   return ranges;
 };
 
-// VISIBILITY_LOST / VISIBILITY_RESTORED 페어를 [{from, to, durationMs}, ...] 로
-const computeVisibilityRanges = (timeline, totalDuration) => {
-  const lostStack = [];
+// VISIBILITY_LOST/RESTORED와 FULLSCREEN_EXIT/ENTER 페어를 모두 [{from, to, durationMs, kind}, ...] 로
+// 두 종류는 독립 스택으로 관리한다 (서로 페어링되지 않음).
+const computeAwayRanges = (timeline, totalDuration) => {
+  const stacks = { VISIBILITY: [], FULLSCREEN: [] };
   const out = [];
-  timeline
-    .slice()
-    .sort((a, b) => a.t - b.t)
-    .forEach((e) => {
-      if (e.type === "VISIBILITY_LOST") {
-        lostStack.push(e);
-      } else if (e.type === "VISIBILITY_RESTORED") {
-        const lost = lostStack.shift();
-        if (lost) {
-          const from = lost.t;
-          const dur = e.payload?.durationMs ?? e.t - lost.t;
-          out.push({ from, to: from + dur, durationMs: dur });
-        }
+  const sorted = timeline.slice().sort((a, b) => a.t - b.t);
+  for (const e of sorted) {
+    if (e.type === "VISIBILITY_LOST") {
+      stacks.VISIBILITY.push(e);
+    } else if (e.type === "VISIBILITY_RESTORED") {
+      const start = stacks.VISIBILITY.shift();
+      if (start) {
+        const dur = e.durationMs ?? e.t - start.t;
+        out.push({ from: start.t, to: start.t + dur, durationMs: dur, kind: "visibility" });
       }
-    });
-  // 페어링 안 된 LOST 는 끝까지 이탈한 것으로 처리
-  lostStack.forEach((lost) => {
-    out.push({
-      from: lost.t,
-      to: totalDuration,
-      durationMs: totalDuration - lost.t,
-      unpaired: true,
-    });
-  });
+    } else if (e.type === "FULLSCREEN_EXIT") {
+      stacks.FULLSCREEN.push(e);
+    } else if (e.type === "FULLSCREEN_ENTER") {
+      const start = stacks.FULLSCREEN.shift();
+      if (start) {
+        const dur = e.durationMs ?? e.t - start.t;
+        out.push({ from: start.t, to: start.t + dur, durationMs: dur, kind: "fullscreen" });
+      }
+    }
+  }
+  // 페어링 누락 → 끝까지 이탈 상태로 본다
+  stacks.VISIBILITY.forEach((s) =>
+    out.push({ from: s.t, to: totalDuration, durationMs: totalDuration - s.t, kind: "visibility", unpaired: true })
+  );
+  stacks.FULLSCREEN.forEach((s) =>
+    out.push({ from: s.t, to: totalDuration, durationMs: totalDuration - s.t, kind: "fullscreen", unpaired: true })
+  );
   return out;
 };
+
+// 순간 이벤트들 (점/세로선으로 표시) — 부정행위 의심 시그널 일체
+const INSTANT_MARKER_TYPES = {
+  WINDOW_BLUR: { color: "#f57c00", label: "창 포커스 손실" },
+  PASTE: { color: "#c62828", label: "붙여넣기" },
+  CAPTURE_SHORTCUT: { color: "#c62828", label: "화면 캡처" },
+  SUSPICIOUS_CHOICE_CHANGE: { color: "#7b1fa2", label: "의심 선택지 변경" },
+};
+
+const computeInstantMarkers = (timeline) =>
+  timeline
+    .filter((e) => INSTANT_MARKER_TYPES[e.type])
+    .map((e) => ({ t: e.t, type: e.type, ...INSTANT_MARKER_TYPES[e.type] }));
 
 // 같은 t (±50ms) 에 SUSPICIOUS_CHOICE_CHANGE 가 있으면 의심으로 마킹
 const isSuspicious = (timeline, choiceChangeEvent) => {
@@ -139,6 +156,9 @@ const reconstructText = (events, currentTime) => {
         if (action === "insert") pushChar(key);
         else if (action === "delete") popChar();
       } else if (e.type === "PASTE") {
+        // paste 시점에 선택 영역이 있었다면 그 길이만큼 먼저 popChar (덮어쓰기 재현)
+        const selectedLength = e.payload?.selectedLength ?? 0;
+        for (let i = 0; i < selectedLength; i++) popChar();
         const preview = e.payload?.preview ?? "";
         segments.push({ text: preview, paste: true });
       }
@@ -239,11 +259,14 @@ export default function Replay() {
     return computeActiveRanges(timeline, totalDuration, selectedQid, first);
   }, [data, selectedQid, timeline, totalDuration, questions]);
 
-  // 화면 이탈 구간 (전 문항 공통)
-  const visibilityRanges = useMemo(
-    () => computeVisibilityRanges(timeline, totalDuration),
+  // 이탈 구간 (VISIBILITY + FULLSCREEN 페어, 전 문항 공통)
+  const awayRanges = useMemo(
+    () => computeAwayRanges(timeline, totalDuration),
     [timeline, totalDuration]
   );
+
+  // 순간 부정행위 마커 (WINDOW_BLUR / PASTE / CAPTURE_SHORTCUT / SUSPICIOUS_CHOICE_CHANGE)
+  const instantMarkers = useMemo(() => computeInstantMarkers(timeline), [timeline]);
 
   // 재생 루프
   useEffect(() => {
@@ -483,18 +506,21 @@ export default function Replay() {
                 }}
               />
             ))}
-            {/* 화면 이탈 구간 (빨간 막대 + 지속시간) */}
-            {visibilityRanges.map((r, idx) => {
+            {/* 이탈 구간 (VISIBILITY: 빨강 / FULLSCREEN: 주황 + 지속시간) */}
+            {awayRanges.map((r, idx) => {
               const widthPct = ((r.to - r.from) / totalDuration) * 100;
+              const isVisibility = r.kind === "visibility";
+              const label = isVisibility ? "화면 이탈" : "전체화면 해제";
               return (
                 <div
-                  key={`v-${idx}`}
+                  key={`a-${idx}`}
                   style={{
                     ...styles.timelineVisibility,
+                    background: isVisibility ? "#e24b4a" : "#ff9800",
                     left: `${(r.from / totalDuration) * 100}%`,
                     width: `${widthPct}%`,
                   }}
-                  title={`화면 이탈 ${(r.durationMs / 1000).toFixed(1)}초`}
+                  title={`${label} ${(r.durationMs / 1000).toFixed(1)}초`}
                 >
                   {widthPct > 5 && (
                     <span style={styles.timelineVisibilityLabel}>
@@ -504,6 +530,18 @@ export default function Replay() {
                 </div>
               );
             })}
+            {/* 순간 부정행위 마커 (세로선) */}
+            {instantMarkers.map((m, idx) => (
+              <div
+                key={`m-${idx}`}
+                style={{
+                  ...styles.timelineMarker,
+                  background: m.color,
+                  left: `${(m.t / totalDuration) * 100}%`,
+                }}
+                title={`${m.label} @ ${formatClock(m.t)}`}
+              />
+            ))}
             {/* 현재 위치 핸들 */}
             <div
               style={{
@@ -518,6 +556,10 @@ export default function Replay() {
               <span style={styles.legendDot("#dcdcdc")} /> 다른 문항
               <span style={styles.legendDot("#185FA5")} /> 이 문항
               <span style={styles.legendDot("#e24b4a")} /> 화면 이탈
+              <span style={styles.legendDot("#ff9800")} /> 전체화면 해제
+              <span style={styles.legendDot("#f57c00")} /> 포커스 손실
+              <span style={styles.legendDot("#c62828")} /> 붙여넣기/캡처
+              <span style={styles.legendDot("#7b1fa2")} /> 의심 변경
             </span>
             <span>{formatClock(totalDuration)}</span>
           </div>
@@ -753,6 +795,15 @@ const styles = {
   timelineVisibilityLabel: {
     pointerEvents: "none",
     fontFamily: '"SF Mono", "Fira Code", monospace',
+  },
+  timelineMarker: {
+    position: "absolute",
+    top: -2,
+    bottom: -2,
+    width: 2,
+    transform: "translateX(-50%)",
+    pointerEvents: "auto",
+    borderRadius: 1,
   },
   timelineHandle: {
     position: "absolute",

@@ -38,6 +38,9 @@ export default function ExamSession() {
 
   const saveTimers = useRef({});
   const hasSubmitted = useRef(false);
+  const isComposingRef = useRef(false);
+  // IME 합성 시작 시점의 선택 영역 길이 — 합성 종료 후 그만큼을 먼저 delete 이벤트로 기록한다.
+  const compositionSelLenRef = useRef(0);
   const deactivateRef = useRef(deactivate);
   deactivateRef.current = deactivate;
   const deactivateWsRef = useRef(deactivateWs);
@@ -175,15 +178,15 @@ export default function ExamSession() {
   };
 
   const handleChoiceToggle = (questionId, choiceId) => {
-    setAnswers((prev) => {
-      const cur = prev[questionId]?.selectedChoiceIds || [];
-      const next = cur.includes(choiceId) ? cur.filter((id) => id !== choiceId) : [...cur, choiceId];
-      trackChoiceChange(questionId, cur, next);
-      const data = { answerText: '', selectedChoiceIds: next };
-      answersRef.current = { ...answersRef.current, [questionId]: data };
-      debounceSave(questionId, data);
-      return { ...prev, [questionId]: data };
-    });
+    // StrictMode 대응: setState updater 내부에서 부수효과(trackChoiceChange 등)를 호출하면
+    // dev 모드에서 두 번 실행되어 이벤트가 중복 기록되므로 모든 부수효과는 밖으로 분리한다.
+    const cur = answersRef.current[questionId]?.selectedChoiceIds || [];
+    const next = cur.includes(choiceId) ? cur.filter((id) => id !== choiceId) : [...cur, choiceId];
+    const data = { answerText: '', selectedChoiceIds: next };
+    answersRef.current = { ...answersRef.current, [questionId]: data };
+    trackChoiceChange(questionId, cur, next);
+    debounceSave(questionId, data);
+    setAnswers((prev) => ({ ...prev, [questionId]: data }));
   };
 
   const handleSubmitConfirm = async () => {
@@ -301,9 +304,54 @@ export default function ExamSession() {
                   value={currentAnswer.answerText}
                   onChange={(e) => handleTextChange(currentQ.id, e.target.value)}
                   onKeyDown={(e) => {
-                    const action = (e.key === 'Backspace' || e.key === 'Delete') ? 'delete' : 'insert';
-                    if (e.key.length === 1 || action === 'delete') {
-                      trackKeystroke(currentQ.id, e.key, action);
+                    // IME 합성 중에는 onKeyDown으로 잡지 않는다 (한글 등). e.key가 'Process'인 경우도 동일.
+                    if (isComposingRef.current || e.key === 'Process') return;
+                    const ta = e.currentTarget;
+                    const selLen = Math.abs((ta.selectionEnd ?? 0) - (ta.selectionStart ?? 0));
+                    if (e.ctrlKey || e.metaKey) {
+                      // Ctrl/Cmd 조합인데 선택 영역이 있는 상태로 Backspace/Delete를 누르면
+                      // 브라우저는 그 선택분을 한 번에 삭제한다. 그 길이만큼 delete 이벤트 발행.
+                      // (Ctrl+A 후 Ctrl 떼지 않고 바로 Backspace 누르는 흔한 패턴)
+                      if ((e.key === 'Backspace' || e.key === 'Delete') && selLen > 0) {
+                        for (let i = 0; i < selLen; i++) {
+                          trackKeystroke(currentQ.id, 'Backspace', 'delete');
+                        }
+                      }
+                      // 그 외 Ctrl/Cmd 조합 (Ctrl+A, Ctrl+V, Ctrl+X 등)은 글자 입력이 아니므로 스킵
+                      return;
+                    }
+                    if (e.key === 'Backspace' || e.key === 'Delete') {
+                      const count = selLen > 0 ? selLen : 1;
+                      for (let i = 0; i < count; i++) {
+                        trackKeystroke(currentQ.id, e.key, 'delete');
+                      }
+                    } else if (e.key === 'Enter') {
+                      for (let i = 0; i < selLen; i++) {
+                        trackKeystroke(currentQ.id, 'Backspace', 'delete');
+                      }
+                      trackKeystroke(currentQ.id, '\n', 'insert');
+                    } else if (e.key.length === 1) {
+                      for (let i = 0; i < selLen; i++) {
+                        trackKeystroke(currentQ.id, 'Backspace', 'delete');
+                      }
+                      trackKeystroke(currentQ.id, e.key, 'insert');
+                    }
+                  }}
+                  onCompositionStart={(e) => {
+                    isComposingRef.current = true;
+                    const ta = e.currentTarget;
+                    compositionSelLenRef.current = Math.abs((ta.selectionEnd ?? 0) - (ta.selectionStart ?? 0));
+                  }}
+                  onCompositionEnd={(e) => {
+                    isComposingRef.current = false;
+                    const selLen = compositionSelLenRef.current || 0;
+                    compositionSelLenRef.current = 0;
+                    for (let i = 0; i < selLen; i++) {
+                      trackKeystroke(currentQ.id, 'Backspace', 'delete');
+                    }
+                    const text = e.data || '';
+                    for (const ch of text) {
+                      trackKeystroke(currentQ.id, ch, 'insert');
                     }
                   }}
                 />
