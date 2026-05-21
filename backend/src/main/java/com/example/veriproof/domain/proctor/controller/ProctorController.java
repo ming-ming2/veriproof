@@ -30,7 +30,7 @@ public class ProctorController {
      * 백로그 16-1: 대시보드 상단 메타 정보 조회
      */
     @Operation(summary = "대시보드 상단 메타 정보 조회")
-    @GetMapping("/exams/{proctorToken}/meta")
+    @GetMapping("/exams/{proctorToken}")
     public ResponseEntity<ApiResponse<ExamDashboardMetaResponse>> getDashboardMeta(
             @PathVariable UUID proctorToken) {
         ExamDashboardMetaResponse data = proctorService.getDashboardMeta(proctorToken);
@@ -65,7 +65,7 @@ public class ProctorController {
      * 백로그 18: 전체 시험 실시간 이벤트 피드
      */
     @Operation(summary = "전체 시험 실시간 이벤트 피드 조회")
-    @GetMapping("/exams/{proctorToken}/feed")
+    @GetMapping("/exams/{proctorToken}/events")
     public ResponseEntity<ApiResponse<ExamEventFeedResponse>> getExamEventFeed(
             @PathVariable UUID proctorToken,
             @RequestParam(name = "since", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime since,

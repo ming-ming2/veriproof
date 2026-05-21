@@ -3,6 +3,8 @@ package com.example.veriproof.domain.proctor.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.veriproof.domain.event.entity.AnswerSnapshot;
+import com.example.veriproof.domain.event.repository.AnswerSnapshotRepository;
 import com.example.veriproof.domain.event.repository.EventLogRepository;
 import com.example.veriproof.domain.exam.entity.Exam;
 import com.example.veriproof.domain.exam.entity.ExamSession;
@@ -32,6 +34,7 @@ public class ProctorService {
     private final ExamRepository examRepository;
     private final ExamSessionRepository examSessionRepository;
     private final EventLogRepository eventLogRepository;
+    private final AnswerSnapshotRepository answerSnapshotRepository;
 
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
@@ -69,9 +72,11 @@ public class ProctorService {
         List<ProctorStudentCardResponse> cards = new ArrayList<>();
 
         for (ActiveSessionInfo info : activeInfos) {
-            // 🚨 기존 AttentionStore 스펙에 맞춰 String을 UUID로 변환하여 전달
             UUID targetSessionUuid = UUID.fromString(info.sessionUuid());
             double score = attentionStore.getScore(exam.getId(), targetSessionUuid);
+            String status = examSessionRepository.findBySessionUuid(targetSessionUuid)
+                    .map(ExamSession::getStatus)
+                    .orElse("IN_PROGRESS");
 
             cards.add(ProctorStudentCardResponse.builder()
                     .sessionUuid(targetSessionUuid)
@@ -81,7 +86,7 @@ public class ProctorService {
                     .lastActivityAt(OffsetDateTime.parse(info.lastActivityAt()))
                     .attentionScore(score)
                     .attentionLevel(determineAttentionLevel(score))
-                    .status("IN_PROGRESS")
+                    .status(status)
                     .build());
         }
 
@@ -102,52 +107,45 @@ public class ProctorService {
                 .orElseThrow(() -> new CustomException(ErrorCode.PROCTOR_TOKEN_INVALID));
 
         ExamSession session = examSessionRepository.findBySessionUuid(sessionUuid)
-                .orElseThrow(() -> new CustomException(ErrorCode.INVALID_SESSION_TOKEN));
+                .orElseThrow(() -> new CustomException(ErrorCode.SESSION_NOT_FOUND));
 
-        // 1. Redis에서 부정행위 시그널 카운트 조회
+        // 1. Redis에서 부정행위 시그널 카운트 조회 → 명세상 camelCase로 변환 (예: visibility_lost → visibilityLost)
         String signalKey = "session:" + sessionUuid + ":signals";
         Map<Object, Object> rawSignals = stringRedisTemplate.opsForHash().entries(signalKey);
         Map<String, Integer> signalCounts = rawSignals.entrySet().stream()
                 .collect(Collectors.toMap(
-                        e -> String.valueOf(e.getKey()),
-                        e -> Integer.valueOf(String.valueOf(e.getValue()))
+                        e -> snakeToCamel(String.valueOf(e.getKey())),
+                        e -> Integer.valueOf(String.valueOf(e.getValue())),
+                        (a, b) -> a
                 ));
 
         // 2. DB에서 평균 화면 이탈 지속시간 계산
         Double rawAvg = eventLogRepository.avgVisibilityDurationMs(session.getId());
         Long avgDuration = rawAvg != null ? rawAvg.longValue() : 0L;
 
-        // 3. DB에서 최근 이벤트 로그 조회
-        List<ProctorStudentDetailResponse.RecentLogItem> recentLogs = eventLogRepository
+        // 3. DB에서 최근 이벤트 로그 조회 (durationMs 포함)
+        List<ProctorStudentDetailResponse.RecentEventItem> recentEvents = eventLogRepository
                 .findAllByExamSessionIdOrderByOccurredAtDesc(session.getId(), PageRequest.of(0, 20))
                 .stream()
-                .map(log -> ProctorStudentDetailResponse.RecentLogItem.builder()
+                .map(log -> ProctorStudentDetailResponse.RecentEventItem.builder()
                         .type(log.getEventType())
                         .questionId(log.getQuestion() != null ? log.getQuestion().getId() : null)
                         .occurredAt(log.getOccurredAt())
+                        .durationMs(log.getDurationMs())
                         .build())
                 .collect(Collectors.toList());
 
-        // 4. Redis에서 현재 작성 중인 답안 초안 조회
-        String draftKey = "session:" + sessionUuid + ":drafts";
-        Map<Object, Object> rawDrafts = stringRedisTemplate.opsForHash().entries(draftKey);
-        List<ProctorStudentDetailResponse.CurrentDraftItem> currentDrafts = new ArrayList<>();
-
-        for (Map.Entry<Object, Object> entry : rawDrafts.entrySet()) {
-            Long qId = Long.valueOf(String.valueOf(entry.getKey()));
-            String draftJson = String.valueOf(entry.getValue());
-            try {
-                Map<String, Object> draftMap = objectMapper.readValue(draftJson, new TypeReference<>() {});
-                String text = draftMap.get("answerText") != null ? String.valueOf(draftMap.get("answerText")) : "";
-
-                currentDrafts.add(ProctorStudentDetailResponse.CurrentDraftItem.builder()
-                        .questionId(qId)
-                        .answerText(text)
-                        .build());
-            } catch (JsonProcessingException e) {
-                log.warn("[Redis 역직렬화 실패] Session: {}, Error: {}", sessionUuid, e.getMessage());
-            }
-        }
+        // 4. 현재 답안 미리보기: 가장 최근 answer_snapshot 1건 (없으면 Redis draft 최신 1건으로 폴백)
+        ProctorStudentDetailResponse.CurrentAnswerPreview currentAnswerPreview =
+                answerSnapshotRepository.findFirstByExamSessionIdOrderByCapturedAtDesc(session.getId())
+                        .map(snap -> ProctorStudentDetailResponse.CurrentAnswerPreview.builder()
+                                .questionId(snap.getQuestion().getId())
+                                .answerText(snap.getAnswerText())
+                                .selectedChoiceIds(snap.getSelectedChoiceIds() != null
+                                        ? new java.util.LinkedHashSet<>(java.util.Arrays.asList(snap.getSelectedChoiceIds()))
+                                        : null)
+                                .build())
+                        .orElseGet(() -> latestDraftPreview(sessionUuid));
 
         double score = attentionStore.getScore(exam.getId(), sessionUuid);
 
@@ -158,9 +156,44 @@ public class ProctorService {
                 .attentionLevel(determineAttentionLevel(score))
                 .signals(signalCounts)
                 .avgVisibilityDurationMs(avgDuration)
-                .recentLogs(recentLogs)
-                .currentDrafts(currentDrafts)
+                .recentEvents(recentEvents)
+                .currentAnswerPreview(currentAnswerPreview)
                 .build();
+    }
+
+    /** snapshot 없을 때만 호출. Redis draft Hash에서 첫 항목을 currentAnswerPreview 형식으로 변환. */
+    private ProctorStudentDetailResponse.CurrentAnswerPreview latestDraftPreview(UUID sessionUuid) {
+        String draftKey = "session:" + sessionUuid + ":drafts";
+        Map<Object, Object> rawDrafts = stringRedisTemplate.opsForHash().entries(draftKey);
+        if (rawDrafts.isEmpty()) return null;
+
+        Map.Entry<Object, Object> entry = rawDrafts.entrySet().iterator().next();
+        Long qId = Long.valueOf(String.valueOf(entry.getKey()));
+        try {
+            Map<String, Object> draftMap = objectMapper.readValue(String.valueOf(entry.getValue()), new TypeReference<>() {});
+            String text = draftMap.get("answerText") != null ? String.valueOf(draftMap.get("answerText")) : null;
+            return ProctorStudentDetailResponse.CurrentAnswerPreview.builder()
+                    .questionId(qId)
+                    .answerText(text)
+                    .build();
+        } catch (JsonProcessingException e) {
+            log.warn("[Redis draft 역직렬화 실패] Session: {}, Error: {}", sessionUuid, e.getMessage());
+            return null;
+        }
+    }
+
+    /** signals Hash 키 변환: visibility_lost → visibilityLost */
+    private static String snakeToCamel(String snake) {
+        if (snake == null || snake.indexOf('_') < 0) return snake;
+        StringBuilder sb = new StringBuilder(snake.length());
+        boolean upper = false;
+        for (int i = 0; i < snake.length(); i++) {
+            char c = snake.charAt(i);
+            if (c == '_') { upper = true; continue; }
+            sb.append(upper ? Character.toUpperCase(c) : c);
+            upper = false;
+        }
+        return sb.toString();
     }
 
     /**

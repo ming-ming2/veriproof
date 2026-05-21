@@ -150,3 +150,67 @@ PR #14 close 처리 (PR #13에 흡수됨 코멘트).
 ### 운영 메모
 
 - Redis ZSET/Hash는 시험 종료 후 1시간 TTL. 시연 시 시드와 시연 사이 텀이 길거나 Redis 재시작 시 attention 점수·signals 카운트는 손실됨. DB `event_log`/`answer_snapshot`은 영구 보존이라 replay는 영향 없음.
+
+---
+
+## 2026-05-21 — 프론트 감독관 대시보드 + 백엔드 16/17/18 통합 (PR #17 흡수)
+
+### 배경
+
+`sprint3/frontend-clean` 브랜치(PR #17)로 프론트 담당이 감독관 대시보드 + 실시간 이상행동 감지 FE 구현(13개 파일, +812/-18)을 올림. 직전에 백엔드 백로그 16/17/18(`0e6e832`) 머지 끝난 직후라 짝이 맞아 같이 통합 검증 가능.
+
+### 머지
+
+- 단일 충돌(`frontend/src/App.jsx` import 라인) 자동병합 실패 → 양쪽 import 모두 보존하여 수동 해결
+- `25b8956 Merge PR #17`
+
+### 발견·수정한 문제
+
+머지 직후 contract 점검과 curl E2E 시나리오(27건) 돌려서 5건 BE 수정.
+
+| # | 문제 | 수정 위치 | 비고 |
+|---|---|---|---|
+| 1 | `GET /proctor/exams/{token}/meta`가 명세(`/proctor/exams/{token}`)와 path 불일치 | `ProctorController.java:33` `/meta` 제거 | FE 호출 path가 명세와 같음. BE만 어긴 케이스 |
+| 2 | `GET /proctor/exams/{token}/feed`가 명세(`/events`)와 path 불일치 | `ProctorController.java:68` `/feed` → `/events` | 동상 |
+| 3 | 학생 카드 응답의 `status`가 항상 `IN_PROGRESS` 하드코딩 — DB가 `SUBMITTED`여도 카드는 `IN_PROGRESS` 그대로 노출 → FE `StudentCard.jsx`의 dim/배지/클릭비활성 로직(`status === 'SUBMITTED'`)이 영영 작동 안 함 | `ProctorService.java:64` `findBySessionUuid().map(ExamSession::getStatus)`로 DB 실제 status 조회 | active_sessions store가 stale entry 보유해도 카드는 DB 진실을 반영 |
+| 4 | 학생 상세 응답의 필드명·구조가 명세와 다 어긋남 — `recentLogs`(↔ 명세 `recentEvents`, +`durationMs` 누락), signals 키 snake_case(↔ 명세 camelCase), `currentDrafts` List(↔ 명세 `currentAnswerPreview` 단일 객체) | `ProctorStudentDetailResponse` DTO 재정의 + `ProctorService.getStudentDetail` 빌더 갱신. signals는 `snakeToCamel` 변환, `currentAnswerPreview`는 최신 `answer_snapshot` 1건(없으면 Redis draft 폴백) | FE `DetailPanel.jsx`가 명세대로 작성돼 있어 BE가 정렬되는 게 맞음. `AnswerSnapshotRepository`에 `findFirstByExamSessionIdOrderByCapturedAtDesc` 추가 |
+| 5 | 학생 상세에서 잘못된 sessionUuid → `401 INVALID_SESSION_TOKEN` (명세는 `404 SESSION_NOT_FOUND`) | `ProctorService.java:105` 에러 코드 교체 | INVALID_SESSION_TOKEN은 학생 X-Session-Token 검증용. 감독관 path 파라미터 조회에는 부적절 |
+
+### E2E 시나리오 (27건)
+
+`/tmp/veriproof_pr17_e2e.sh` — curl 기반 통합 스크립트. SSE는 background `curl -N`으로 받아서 파일에 기록 후 검증.
+
+| 영역 | 시나리오 | 결과 |
+|---|---|---|
+| Setup | 회원가입/로그인/시험 개설(2문항, 명단 1명)/학생 세션 시작 | ✅ 4/4 |
+| Proctor API 경로 | 메타·카드 목록·학생 상세·이벤트 피드 정상 200 응답 | ✅ 4/4 |
+| 정렬 | `sort=attentionScore`, `sort=studentNumber`, `sort=attention` (else 분기 fallback) | ✅ 3/3 |
+| SSE 구독 | `/stream` 연결 성공 + heartbeat 수신 | ✅ |
+| 즉시 이벤트 (4건 POST → 6 row) | PASTE / VISIBILITY 페어링(durationMs=2000) / FULLSCREEN_EXIT / CAPTURE_SHORTCUT / WINDOW_BLUR | ✅ 4/4 |
+| 배치 이벤트 | KEYSTROKE + QUESTION_NAVIGATE + 답안 스냅샷 1건 | ✅ |
+| SSE broadcast 수신 | `student-event` 6건, `attention-update` 4건 — PR-7에서 미검증이었던 항목 이번에 통과 | ✅ |
+| 실시간 점수 변동 | 카드 `attentionScore: 0 → 4`, `level: HIGH` | ✅ |
+| 학생 상세 명세 정합 | `recentEvents` 8건 + `signals` 4키 모두 camelCase + `currentAnswerPreview.questionId=Q1` | ✅ |
+| 이벤트 피드 누적 | 0건 → 8건 (broadcast 시 DB INSERT 누적) | ✅ |
+| 이벤트 피드 `?since=` | 200 응답 | ✅ |
+| 옛 경로 제거 확인 | `/meta`, `/feed` → 404 | ✅ 2/2 |
+| 에러 경계 | 잘못된 proctorToken → 401 `PROCTOR_TOKEN_INVALID` / 잘못된 sessionUuid → 404 `SESSION_NOT_FOUND` | ✅ 2/2 |
+| 제출 후 상태 반영 | 학생 submit → 카드 응답 `status: SUBMITTED` (#3 fix 검증) | ✅ |
+
+**총 PASS 27 / FAIL 0**.
+
+### 새로 검증된 항목 (이전엔 미검증)
+
+- 감독관 SSE broadcast 수신 — PR-7에서 미검증 상태였던 항목. 학생 이벤트 발생 시 `student-event`/`attention-update` 두 종류 SSE 이벤트가 정상 push됨을 확인.
+- 명세 정합성 — `signals` camelCase, `recentEvents` 필드명/`durationMs` 포함, `currentAnswerPreview` 구조 모두 spec과 일치.
+
+### 검증되지 않은 항목 (그대로 유지)
+
+- `InMemoryEventBroadcaster` 30초 heartbeat 송신 — 첫 heartbeat는 들어오나(`event:heartbeat`) 30초 주기 검증은 별개 장기 테스트 필요
+- Redis fail-open 동작 (Redis 컨테이너 중지 필요)
+- 브라우저 측 FE 렌더링 — UI/UX는 수동 검증 필요 (`http://localhost:5173`)
+
+### 운영 메모
+
+- `currentAnswerPreview`는 `answer_snapshot` 최신 1건을 우선 사용하고, 스냅샷이 없을 때만 Redis `session:{uuid}:drafts` 폴백. 답안 저장 직후엔 draft만 있고 60초 주기로 snapshot이 쌓이는 구조.
+- 카드 `status`는 이제 DB 진실원 (`exam_session.status`)을 따라가므로 active_sessions Redis store에 stale entry가 남아있어도 정확하게 `SUBMITTED`/`EXPIRED` 반영.
