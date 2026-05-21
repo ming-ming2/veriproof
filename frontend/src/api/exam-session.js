@@ -31,3 +31,15 @@ export const sendHeartbeat = (sessionToken) =>
   axiosInstance.post('/student/sessions/me/heartbeat', null, {
     headers: { 'X-Session-Token': sessionToken },
   });
+
+// 즉시 이벤트 전송 (백로그 13) [X-Session-Token]
+export const sendInstantEvents = (sessionToken, events) =>
+  axiosInstance.post('/student/sessions/me/events', { events }, {
+    headers: { 'X-Session-Token': sessionToken },
+  });
+
+// 배치 이벤트 + 답안 스냅샷 전송 (백로그 14) [X-Session-Token]
+export const sendBatchEvents = (sessionToken, data) =>
+  axiosInstance.post('/student/sessions/me/events/batch', data, {
+    headers: { 'X-Session-Token': sessionToken },
+  });
