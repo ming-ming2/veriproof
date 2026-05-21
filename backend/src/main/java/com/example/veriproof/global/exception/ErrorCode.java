@@ -57,7 +57,12 @@ public enum ErrorCode {
     NOT_SUBJECTIVE_QUESTION(HttpStatus.BAD_REQUEST, "NOT_SUBJECTIVE_QUESTION", "주관식 문항만 수동으로 채점할 수 있습니다."),
 
     // 학생 응시 - 인프라 장애 (Redis fail-close)
-    LOCK_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "LOCK_UNAVAILABLE", "일시적인 장애로 응시를 시작할 수 없습니다.");
+    LOCK_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "LOCK_UNAVAILABLE", "일시적인 장애로 응시를 시작할 수 없습니다."),
+
+    // Sprint 3 - 실시간 이벤트 / 감독관
+    EVENT_TYPE_INVALID(HttpStatus.BAD_REQUEST, "EVENT_TYPE_INVALID", "지원하지 않는 이벤트 타입입니다."),
+    BATCH_PERIOD_INVALID(HttpStatus.BAD_REQUEST, "BATCH_PERIOD_INVALID", "배치 구간 시작/종료 시각이 올바르지 않습니다."),
+    PROCTOR_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "PROCTOR_TOKEN_INVALID", "감독관 토큰이 유효하지 않습니다.");
 
     private final HttpStatus status;
     private final String code;

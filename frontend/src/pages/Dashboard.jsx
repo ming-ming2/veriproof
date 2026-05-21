@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { getExams } from "../api/exam";
+import { getExams, createExam } from "../api/exam";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -8,9 +8,72 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [creatingTest, setCreatingTest] = useState(false);
 
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const userName = user.name ? `${user.name} 교수` : "교수";
+
+  // 테스트용 시험 자동 생성 (주관식·객관식·주관식 3문항, 시작 +3분, 종료 +10분)
+  const handleCreateTestExam = async () => {
+    if (creatingTest) return;
+    setCreatingTest(true);
+    try {
+      const now = new Date();
+      const startsAt = new Date(now.getTime() + 1 * 60 * 1000).toISOString();
+      const endsAt = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
+      const stamp = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+      const payload = {
+        title: `테스트 시험 ${stamp}`,
+        startsAt,
+        endsAt,
+        questions: [
+          {
+            questionType: "SUBJECTIVE",
+            body: "1번 문항 (주관식): 자유롭게 답안을 작성해 주세요.",
+            correctAnswer: "",
+            points: 10,
+            displayOrder: 1,
+            choices: [],
+          },
+          {
+            questionType: "MULTIPLE_CHOICE",
+            body: "2번 문항 (객관식): 다음 중 올바른 것을 고르시오.",
+            correctAnswer: "",
+            points: 10,
+            displayOrder: 2,
+            choices: [
+              { body: "선택지 A", isCorrect: false, displayOrder: 1 },
+              { body: "선택지 B", isCorrect: true, displayOrder: 2 },
+              { body: "선택지 C", isCorrect: false, displayOrder: 3 },
+              { body: "선택지 D", isCorrect: false, displayOrder: 4 },
+            ],
+          },
+          {
+            questionType: "SUBJECTIVE",
+            body: "3번 문항 (주관식): 자유롭게 답안을 작성해 주세요.",
+            correctAnswer: "",
+            points: 10,
+            displayOrder: 3,
+            choices: [],
+          },
+        ],
+        roster: [
+          { studentNumber: "60212229", studentName: "임기연" },
+          { studentNumber: "20240001", studentName: "테스트학생1" },
+          { studentNumber: "20240002", studentName: "테스트학생2" },
+        ],
+      };
+      const { data: res } = await createExam(payload);
+      navigate(`/exam/${res.data.id}`);
+    } catch (err) {
+      alert(
+        err.response?.data?.error?.message ||
+          "테스트 시험 생성에 실패했습니다."
+      );
+    } finally {
+      setCreatingTest(false);
+    }
+  };
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -103,12 +166,22 @@ export default function Dashboard() {
       <div style={styles.content}>
         <div style={styles.pageHeader}>
           <h1 style={styles.pageTitle}>내 시험 목록</h1>
-          <button
-            style={styles.createBtn}
-            onClick={() => navigate("/exam/create")}
-          >
-            + 새 시험 만들기
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              style={{ ...styles.testBtn, opacity: creatingTest ? 0.6 : 1 }}
+              onClick={handleCreateTestExam}
+              disabled={creatingTest}
+              title="주관식·객관식·주관식 3문항, 시작 +1분 / 종료 +10분"
+            >
+              {creatingTest ? "생성 중..." : "테스트 시험 생성"}
+            </button>
+            <button
+              style={styles.createBtn}
+              onClick={() => navigate("/exam/create")}
+            >
+              + 새 시험 만들기
+            </button>
+          </div>
         </div>
 
         {loading && <div style={styles.loadingText}>불러오는 중...</div>}
@@ -271,6 +344,16 @@ const styles = {
     borderRadius: 8,
     background: "#185FA5",
     color: "#fff",
+    cursor: "pointer",
+    fontWeight: 500,
+  },
+  testBtn: {
+    fontSize: 13,
+    padding: "8px 16px",
+    border: "1px dashed #888",
+    borderRadius: 8,
+    background: "#fff",
+    color: "#555",
     cursor: "pointer",
     fontWeight: 500,
   },

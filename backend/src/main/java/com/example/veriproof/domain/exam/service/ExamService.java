@@ -12,6 +12,7 @@ import com.example.veriproof.global.exception.CustomException;
 import com.example.veriproof.global.exception.ErrorCode;
 import com.example.veriproof.infra.storage.FileStorageService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +30,10 @@ public class ExamService {
     private final ExamSessionRepository examSessionRepository;
     private final SubmissionAnswerRepository submissionAnswerRepository;
     private final FileStorageService fileStorageService;
+
+    @Value("${app.frontend-base-url}")
+    private String frontendBaseUrl;
+
     // 난수 생성을 위해 암호학적으로 안전한 SecureRandom 사용
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private static final String ALPHANUMERIC = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -90,7 +95,7 @@ public class ExamService {
         Exam savedExam = examRepository.save(exam);
 
         // 10. 응답 반환 (QR 제거됨 - 시험 코드만 사용)
-        String proctorLink = "https://veriproof.com/proctor/" + savedExam.getProctorToken();
+        String proctorLink = frontendBaseUrl + "/proctor/" + savedExam.getProctorToken();
 
         return new Response.ExamCreateResponse(
                 savedExam.getId(),
@@ -141,7 +146,7 @@ public class ExamService {
         }
 
         // 3. 반환할 URL 조립 (QR 제거됨)
-        String proctorLink = "https://veriproof.com/proctor/" + exam.getProctorToken();
+        String proctorLink = frontendBaseUrl + "/proctor/" + exam.getProctorToken();
 
         // 4. 문항(Questions) DTO 변환
         List<Response.QuestionDetailDto> questionDtos = exam.getQuestions().stream()

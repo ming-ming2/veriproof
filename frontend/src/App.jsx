@@ -20,6 +20,12 @@ import ProfileEdit from './pages/ProfileEdit';  // ← 신규
 // 백로그 11 (주관식 채점) 페이지
 import SessionGrade from './pages/SessionGrade';
 
+// 백로그 15 (답안 재생) 페이지
+import Replay from './pages/Replay';
+
+// 스프린트 3: 감독관 대시보드
+import ProctorDashboard from './pages/ProctorDashboard';
+
 // 로그인된 사용자만 접근 가능한 라우트 보호
 function PrivateRoute({ children }) {
     const token = localStorage.getItem('token');
@@ -83,12 +89,24 @@ export default function App() {
                         </PrivateRoute>
                     }
                 />
+                {/* 백로그 15: 종료된 시험 답안 재생 */}
+                <Route
+                    path="/exam/:examId/sessions/:sessionId/replay"
+                    element={
+                        <PrivateRoute>
+                            <Replay />
+                        </PrivateRoute>
+                    }
+                />
 
                 {/* 학생 응시 플로우 (인증 불필요) */}
                 <Route path="/exam" element={<ExamEnterCode />} />
                 <Route path="/exam/enter" element={<ExamEnterStudent />} />
                 <Route path="/exam/session" element={<ExamSession />} />
                 <Route path="/exam/done" element={<ExamDone />} />
+
+                {/* 스프린트 3: 감독관 대시보드 (URL 토큰 인증) */}
+                <Route path="/proctor/:token" element={<ProctorDashboard />} />
 
                 {/* 신규: 프로필/계정 설정 라우트 */}
                 <Route
