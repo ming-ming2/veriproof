@@ -57,15 +57,8 @@ export default function ExamSession() {
 
   const saveTimers = useRef({});
   const hasSubmitted = useRef(false);
-  const isComposingRef = useRef(false);
-  // IME 합성 시작 시점의 cursor 위치와 선택 영역 — 합성 종료 시 splice 위치로 사용.
-  const compositionStartRef = useRef({ pos: 0, selLen: 0 });
-  // textarea 네이티브 ref — React의 onBeforeInput JSX 핸들러는 delete 계열 inputType을 안 잡으므로
-  // 네이티브 'beforeinput' 이벤트를 직접 바인딩해야 한다.
-  const textareaRef = useRef(null);
-  // 핸들러에서 최신 trackEdit / currentQ에 접근하기 위한 ref (closure 회피)
-  const trackEditRef = useRef(null);
-  const currentQRef = useRef(null);
+  // paste로 인한 값 변경은 PASTE 이벤트로 별도 기록되므로, 그 직후 onChange는 KEYSTROKE emit을 건너뛴다.
+  const justPastedRef = useRef(false);
   const deactivateRef = useRef(deactivate);
   deactivateRef.current = deactivate;
   const deactivateWsRef = useRef(deactivateWs);
@@ -179,55 +172,28 @@ export default function ExamSession() {
     if (q?.id) setCurrentQuestionIdRef.current(q.id);
   }, [currentIndex, sessionInfo]);
 
-  // ref 최신값 동기화 (네이티브 beforeinput 핸들러용)
-  useEffect(() => {
-    trackEditRef.current = trackEdit;
-  }, [trackEdit]);
-
-  // 네이티브 'beforeinput' 직접 바인딩 — React JSX onBeforeInput은 delete 계열을 안 잡으므로 필수.
-  // 매 렌더마다 attach/detach 하기 부담스러우니 ref만 의존성으로 두고, 안에서는 ref 값으로 최신 상태 조회.
-  useEffect(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    const handler = (e) => {
-      const inputType = e.inputType;
-      const selStart = ta.selectionStart ?? 0;
-      const selEnd = ta.selectionEnd ?? 0;
-      let rangeInfo = null;
-      if (typeof e.getTargetRanges === 'function') {
-        const ranges = e.getTargetRanges();
-        if (ranges && ranges.length > 0) {
-          rangeInfo = { start: ranges[0].startOffset, end: ranges[0].endOffset };
-        }
-      }
-      debugLog('native-beforeinput', { inputType, data: e.data, selStart, selEnd, rangeInfo });
-      if (!inputType || !inputType.startsWith('delete')) return;
-
-      // CUT은 별도 채널 없으니 여기서 잡아도 되긴 하는데, replay 정확도 위해 일단 동일하게 처리
-      let pos = selStart;
-      let removeLen = Math.abs(selEnd - selStart);
-      if (rangeInfo) {
-        pos = rangeInfo.start;
-        removeLen = Math.max(0, rangeInfo.end - rangeInfo.start);
-      }
-      if (removeLen === 0) {
-        if (inputType === 'deleteContentBackward' && pos > 0) {
-          pos = pos - 1; removeLen = 1;
-        } else if (inputType === 'deleteContentForward') {
-          removeLen = 1;
-        } else if (inputType.startsWith('delete') && pos > 0) {
-          // word/line backward delete fallback — getTargetRanges가 없을 때 최소 1자라도
-          pos = pos - 1; removeLen = 1;
-        }
-      }
-      if (removeLen > 0) {
-        const qid = currentQRef.current?.id;
-        if (qid != null) trackEditRef.current?.(qid, pos, removeLen, '');
-      }
+  // prev ↔ next 텍스트의 공통 prefix/suffix를 잘라내 단일 splice 형태로 변환.
+  // 키 입력 한 번 = onChange 한 번 = 1:1 이벤트라 IME 조합 중간 상태도 자연스럽게 기록된다.
+  // (예: "한" → "한ㄴ" → "한녀" → "한녕" 각각 별개 KEYSTROKE)
+  const computeTextDiff = (prev, next) => {
+    if (prev === next) return null;
+    const prevLen = prev.length;
+    const nextLen = next.length;
+    let start = 0;
+    const minLen = Math.min(prevLen, nextLen);
+    while (start < minLen && prev[start] === next[start]) start++;
+    let endPrev = prevLen;
+    let endNext = nextLen;
+    while (endPrev > start && endNext > start && prev[endPrev - 1] === next[endNext - 1]) {
+      endPrev--;
+      endNext--;
+    }
+    return {
+      pos: start,
+      removeLen: endPrev - start,
+      insert: next.slice(start, endNext),
     };
-    ta.addEventListener('beforeinput', handler);
-    return () => ta.removeEventListener('beforeinput', handler);
-  }, [sessionInfo, currentIndex]);  // 문항 전환 시 textarea가 unmount/remount될 수 있어 재바인딩
+  };
 
   // 문항 이동 + 네비게이션 추적
   const navigateTo = useCallback((newIndex) => {
@@ -246,10 +212,29 @@ export default function ExamSession() {
   }, []);
 
   const handleTextChange = (questionId, value) => {
+    const prevValue = answersRef.current[questionId]?.answerText || '';
+    // paste 직후 onChange는 KEYSTROKE 중복 방지 (PASTE 이벤트로 별도 기록됨)
+    if (!justPastedRef.current && value !== prevValue) {
+      const diff = computeTextDiff(prevValue, value);
+      if (diff && (diff.removeLen > 0 || diff.insert.length > 0)) {
+        trackEdit(questionId, diff.pos, diff.removeLen, diff.insert);
+        debugLog('text-diff', { questionId, ...diff });
+      }
+    }
+    justPastedRef.current = false;
+
     const data = { answerText: value, selectedChoiceIds: [] };
     answersRef.current = { ...answersRef.current, [questionId]: data };
     setAnswers((prev) => ({ ...prev, [questionId]: data }));
     debounceSave(questionId, data);
+  };
+
+  const handleTextareaPaste = () => {
+    justPastedRef.current = true;
+    // paste가 prevented되거나 onChange가 발생하지 않은 경우 플래그를 안전하게 해제.
+    setTimeout(() => {
+      justPastedRef.current = false;
+    }, 0);
   };
 
   const handleChoiceToggle = (questionId, choiceId) => {
@@ -304,7 +289,6 @@ export default function ExamSession() {
 
   const questions = sessionInfo?.questions || [];
   const currentQ = questions[currentIndex];
-  currentQRef.current = currentQ;
   const currentAnswer = answers[currentQ?.id] || { answerText: '', selectedChoiceIds: [] };
   const isWarningTime = timeLeft > 0 && timeLeft <= 300;
 
@@ -379,52 +363,7 @@ export default function ExamSession() {
                   placeholder="답안을 입력하세요"
                   value={currentAnswer.answerText}
                   onChange={(e) => handleTextChange(currentQ.id, e.target.value)}
-                  onKeyDown={(e) => {
-                    const ta = e.currentTarget;
-                    const selStart = ta.selectionStart ?? 0;
-                    const selEnd = ta.selectionEnd ?? 0;
-                    const selLen = Math.abs(selEnd - selStart);
-                    debugLog('keydown', {
-                      key: e.key, code: e.code,
-                      ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey, alt: e.altKey,
-                      isComposing: isComposingRef.current,
-                      selStart, selEnd, repeat: e.repeat,
-                    });
-                    // IME 합성 중에는 onKeyDown으로 잡지 않는다.
-                    if (isComposingRef.current || e.key === 'Process') return;
-                    // 삭제 동작(Backspace/Delete, Cmd/Ctrl+Backspace의 단어/줄 삭제 포함)은
-                    // onBeforeInput에서 inputType + getTargetRanges()로 정확히 잡으므로 여기선 손대지 않는다.
-                    if (e.key === 'Backspace' || e.key === 'Delete') return;
-                    // 그 외 Ctrl/Cmd 조합(Ctrl+A, Ctrl+V, Ctrl+X 등)은 글자 입력이 아니므로 스킵.
-                    if (e.ctrlKey || e.metaKey) return;
-                    if (e.key === 'Enter') {
-                      trackEdit(currentQ.id, selStart, selLen, '\n');
-                    } else if (e.key.length === 1) {
-                      trackEdit(currentQ.id, selStart, selLen, e.key);
-                    }
-                  }}
-                  ref={textareaRef}
-                  onCompositionStart={(e) => {
-                    isComposingRef.current = true;
-                    const ta = e.currentTarget;
-                    const selStart = ta.selectionStart ?? 0;
-                    const selEnd = ta.selectionEnd ?? 0;
-                    compositionStartRef.current = {
-                      pos: selStart,
-                      selLen: Math.abs(selEnd - selStart),
-                    };
-                    debugLog('compositionstart', { selStart, selEnd, data: e.data });
-                  }}
-                  onCompositionUpdate={(e) => {
-                    debugLog('compositionupdate', { data: e.data });
-                  }}
-                  onCompositionEnd={(e) => {
-                    isComposingRef.current = false;
-                    const { pos, selLen } = compositionStartRef.current;
-                    compositionStartRef.current = { pos: 0, selLen: 0 };
-                    debugLog('compositionend', { pos, selLen, data: e.data });
-                    trackEdit(currentQ.id, pos, selLen, e.data || '');
-                  }}
+                  onPaste={handleTextareaPaste}
                 />
               ) : (
                 <div style={styles.choicesArea}>
