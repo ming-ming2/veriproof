@@ -19,7 +19,7 @@ export default function Dashboard() {
     setCreatingTest(true);
     try {
       const now = new Date();
-      const startsAt = new Date(now.getTime() + 1 * 60 * 1000).toISOString();
+      const startsAt = new Date(now.getTime()).toISOString();
       const endsAt = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
       const stamp = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
       const payload = {
