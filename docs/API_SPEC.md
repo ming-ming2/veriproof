@@ -615,6 +615,67 @@ data: {}
 
 ---
 
+## 사후 리포트 엔드포인트 (백로그 20)
+
+시험 종료 후 교수가 보는 리포트 탭. 한 번의 호출로 응시자 통계·시그널 분포·의심 패턴·학생 순위를 모두 반환한다. 학생 행 드릴다운은 신규 엔드포인트 없이 기존 답안 재생(`GET /exams/{examId}/sessions/{sessionId}/replay`)·답안 상세(채점, 백로그 11)를 재사용한다.
+
+### GET /exams/{examId}/report [auth]
+
+종료된 시험의 집계 리포트 (백로그 20). 본인이 개설한 시험만. 시험 종료 시각(`endsAt`) 이후에만 활성 — 이전이면 400 `EXAM_NOT_ENDED` (리포트 탭 비활성 상태).
+
+```json
+// res 200
+{
+  "data": {
+    "examId": 1,
+    "title": "...",
+    "endsAt": "...",
+    "summary": {
+      "rosterCount": 30,
+      "takerCount": 28,
+      "submittedCount": 27,
+      "avgScore": 72.4,
+      "avgDurationMs": 2640000
+    },
+    "signalDistribution": {
+      "paste": 14,
+      "visibilityLost": 22,
+      "fullscreenExit": 9,
+      "captureShortcut": 3,
+      "suspiciousChoiceChange": 6
+    },
+    "suspiciousPatterns": {
+      "choiceChangeAfterReturn": 6,
+      "pasteAfterReturn": 4
+    },
+    "students": [
+      {
+        "sessionId": 1,
+        "sessionUuid": "...",
+        "studentNumber": "20230001",
+        "studentName": "...",
+        "status": "SUBMITTED",
+        "totalScore": 85,
+        "durationMs": 2700000,
+        "attentionScore": 7,
+        "attentionLevel": "HIGH"
+      }
+    ]
+  }
+}
+```
+
+- `students`: 최종 주목도 점수 내림차순 정렬, 동점은 학번 오름차순. 행 클릭 시 `sessionId`로 재생, `sessionUuid`로 답안 상세 라우팅.
+- **주목도 점수/레벨**: `event_log`의 점수 부여 이벤트 COUNT로 산출 (Redis `exam:{examId}:attention` ZSET은 `endsAt+1h` 만료라 리포트는 영속 데이터 기준). 레벨 임계는 감독관과 동일 — `HIGH ≥ 4`, `MID ≥ 2`, `LOW ≥ 1`, `NORMAL = 0`.
+- **signalDistribution**: 시험 전체 합산. `event_log` `idx_event_type` 기준 집계. 키는 감독관 학생 상세(`signals`)와 동일.
+- **suspiciousPatterns.choiceChangeAfterReturn**: `event_type='SUSPICIOUS_CHOICE_CHANGE'` COUNT (= `signalDistribution.suspiciousChoiceChange`).
+- **suspiciousPatterns.pasteAfterReturn**: `VISIBILITY_RESTORED`/`FULLSCREEN_ENTER` 직후 5초 내 `PASTE`. 별도 파생 이벤트가 없어 리포트 질의에서 윈도우 상관으로 계산.
+- **summary.avgScore**: 제출 세션 `total_score` 평균. **avgDurationMs**: 제출 세션 `submittedAt − startedAt` 평균. 미제출 세션은 평균에서 제외하되 `takerCount`에는 포함.
+
+에러: 404 `EXAM_NOT_FOUND`, 403 `FORBIDDEN`, 400 `EXAM_NOT_ENDED`.
+
+---
+
 ## 에러 코드
 
 | 코드 | HTTP | 비고 |
@@ -622,6 +683,7 @@ data: {}
 | `VALIDATION_FAILED` | 400 | `@Valid` 실패 |
 | `EXAM_NOT_STARTED` | 400 | 시험 시작 시각 이전 |
 | `EXAM_ENDED` | 400 | 시험 종료 시각 이후 |
+| `EXAM_NOT_ENDED` | 400 | 종료 전 리포트 조회 (백로그 20) |
 | `EXAM_TIME_INVALID` | 400 | `endsAt ≤ startsAt` |
 | `ROSTER_EMPTY` | 400 | 명단 0명 |
 | `MULTIPLE_CHOICE_NO_CHOICES` | 400 | 객관식 선택지 < 2 |
