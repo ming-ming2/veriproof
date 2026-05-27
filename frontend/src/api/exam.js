@@ -27,6 +27,10 @@ export const gradeSubjective = (examId, sessionId, questionId, earnedScore) =>
     { earnedScore }
   );
 
+// 종료된 시험 답안 재생 데이터 일괄 조회 (백로그 15)
+export const getReplay = (examId, sessionId) =>
+  axiosInstance.get(`/exams/${examId}/sessions/${sessionId}/replay`);
+
 // 문항 이미지 업로드 (시험 개설 후 문항별 이미지 첨부 시 사용)
 export const uploadQuestionImage = (examId, questionId, file) => {
   const formData = new FormData();

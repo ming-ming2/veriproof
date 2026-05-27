@@ -14,4 +14,6 @@ public interface ExamRepository extends JpaRepository<Exam, Long> {
     Optional<Exam> findByExamCode(String examCode);
 
     List<Exam> findAllByProfessorIdOrderByCreatedAtDesc(Long professorId);
+
+    Optional<Exam> findByProctorToken(java.util.UUID proctorToken);
 }

@@ -321,6 +321,7 @@ export default function ExamDetail() {
                   <th style={styles.th}>총점</th>
                   <th style={styles.th}>응시 시각</th>
                   <th style={styles.th}>제출 시각</th>
+                  <th style={styles.th}>재생</th>
                 </tr>
               </thead>
               <tbody>
@@ -344,6 +345,24 @@ export default function ExamDetail() {
                     <td style={styles.td}>{s.totalScore ?? "-"}</td>
                     <td style={styles.td}>{formatDate(s.startedAt)}</td>
                     <td style={styles.td}>{formatDate(s.submittedAt)}</td>
+                    <td style={styles.td}>
+                      {s.status === "SUBMITTED" ? (
+                        <button
+                          style={styles.replayBtn}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(
+                              `/exam/${examId}/sessions/${s.id}/replay`
+                            );
+                          }}
+                          title="응시 과정을 시각적으로 재생합니다"
+                        >
+                          ▶ 재생
+                        </button>
+                      ) : (
+                        <span style={styles.replayDisabled}>—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -605,6 +624,17 @@ const styles = {
     fontFamily: '"SF Mono", "Fira Code", monospace',
   },
   sessionRow: { cursor: "pointer", transition: "background 0.1s" },
+  replayBtn: {
+    fontSize: 11,
+    padding: "4px 10px",
+    border: "1px solid #185FA5",
+    borderRadius: 6,
+    background: "#fff",
+    color: "#185FA5",
+    cursor: "pointer",
+    fontWeight: 500,
+  },
+  replayDisabled: { fontSize: 12, color: "#bbb" },
   emptySessionBox: {
     textAlign: "center",
     padding: 24,

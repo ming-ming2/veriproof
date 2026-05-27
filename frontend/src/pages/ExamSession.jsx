@@ -3,13 +3,48 @@ import { useNavigate } from 'react-router-dom';
 import { getSession, saveAnswer, submitExam, sendHeartbeat } from '../api/exam-session';
 import { useFullscreen } from '../hooks/useFullscreen';
 import { useExamGuard } from '../hooks/useExamGuard';
+import { useExamWebsocket } from '../hooks/useExamWebsocket';
+import { useBehaviorTracker } from '../hooks/useBehaviorTracker';
+
+// 디버그 로거 — localStorage.setItem('examDebug', '1') 로 켬.
+// console + sessionStorage('examDebugLog')에 raw 이벤트를 누적 기록한다.
+const examDebugEnabled = () =>
+  typeof window !== 'undefined' && window.localStorage?.getItem('examDebug') === '1';
+const debugLog = (kind, data) => {
+  if (!examDebugEnabled()) return;
+  const entry = { t: new Date().toISOString(), kind, ...data };
+  // 한 줄 요약 로깅 (펼치면 객체 전부 보임)
+  // eslint-disable-next-line no-console
+  console.log(`[examDebug] ${kind}`, entry);
+  try {
+    const key = 'examDebugLog';
+    const arr = JSON.parse(window.sessionStorage.getItem(key) || '[]');
+    arr.push(entry);
+    if (arr.length > 5000) arr.splice(0, arr.length - 5000);
+    window.sessionStorage.setItem(key, JSON.stringify(arr));
+  } catch {}
+};
 
 export default function ExamSession() {
   const navigate = useNavigate();
   const { requestFullscreen } = useFullscreen();
-  const { violationCount, showWarning, dismissWarning, deactivate } = useExamGuard({ requestFullscreen });
+  const { violationCount, showWarning, lastViolationType, dismissWarning, deactivate } = useExamGuard({ requestFullscreen });
 
   const sessionTokenRef = useRef(sessionStorage.getItem('sessionToken'));
+
+  const answersRef = useRef({});
+  const questionsRef = useRef([]);
+  const getAnswers = useCallback(() => answersRef.current, []);
+  const getQuestions = useCallback(() => questionsRef.current, []);
+
+  const { setCurrentQuestionId, deactivate: deactivateWs } = useExamWebsocket({
+    sessionToken: sessionTokenRef.current,
+  });
+  const { trackEdit, trackChoiceChange, trackNavigation, flushBeforeSubmit } = useBehaviorTracker({
+    sessionToken: sessionTokenRef.current,
+    getAnswers,
+    getQuestions,
+  });
 
   const [loading, setLoading] = useState(true);
   const [sessionInfo, setSessionInfo] = useState(null); // { examTitle, endsAt, questions }
@@ -22,13 +57,22 @@ export default function ExamSession() {
 
   const saveTimers = useRef({});
   const hasSubmitted = useRef(false);
+  // paste로 인한 값 변경은 PASTE 이벤트로 별도 기록되므로, 그 직후 onChange는 KEYSTROKE emit을 건너뛴다.
+  const justPastedRef = useRef(false);
   const deactivateRef = useRef(deactivate);
   deactivateRef.current = deactivate;
+  const deactivateWsRef = useRef(deactivateWs);
+  deactivateWsRef.current = deactivateWs;
+  const flushBeforeSubmitRef = useRef(flushBeforeSubmit);
+  flushBeforeSubmitRef.current = flushBeforeSubmit;
+  const setCurrentQuestionIdRef = useRef(setCurrentQuestionId);
+  setCurrentQuestionIdRef.current = setCurrentQuestionId;
 
   const doFinish = useCallback(async () => {
     if (hasSubmitted.current) return;
     hasSubmitted.current = true;
     deactivateRef.current();
+    deactivateWsRef.current();
     sessionStorage.removeItem('sessionToken');
     sessionStorage.removeItem('sessionData');
     if (document.fullscreenElement) {
@@ -39,6 +83,7 @@ export default function ExamSession() {
 
   const doSubmit = useCallback(async () => {
     if (hasSubmitted.current) return false;
+    await flushBeforeSubmitRef.current();
     try {
       await submitExam(sessionTokenRef.current);
     } catch (err) {
@@ -59,6 +104,7 @@ export default function ExamSession() {
     getSession(sessionTokenRef.current)
       .then(({ data: res }) => {
         const d = res.data;
+        questionsRef.current = d.questions;
         setSessionInfo({ examTitle: d.examTitle, endsAt: d.endsAt, questions: d.questions });
 
         // 이전 답안 복원
@@ -69,6 +115,7 @@ export default function ExamSession() {
             selectedChoiceIds: draft.selectedChoiceIds || [],
           };
         });
+        answersRef.current = init;
         setAnswers(init);
         setLoading(false);
       })
@@ -118,6 +165,45 @@ export default function ExamSession() {
     };
   }, [sessionInfo, doSubmit]);
 
+  // currentIndex 변경 시 WS에 현재 문항 ID 갱신
+  useEffect(() => {
+    if (!sessionInfo?.questions) return;
+    const q = sessionInfo.questions[currentIndex];
+    if (q?.id) setCurrentQuestionIdRef.current(q.id);
+  }, [currentIndex, sessionInfo]);
+
+  // prev ↔ next 텍스트의 공통 prefix/suffix를 잘라내 단일 splice 형태로 변환.
+  // 키 입력 한 번 = onChange 한 번 = 1:1 이벤트라 IME 조합 중간 상태도 자연스럽게 기록된다.
+  // (예: "한" → "한ㄴ" → "한녀" → "한녕" 각각 별개 KEYSTROKE)
+  const computeTextDiff = (prev, next) => {
+    if (prev === next) return null;
+    const prevLen = prev.length;
+    const nextLen = next.length;
+    let start = 0;
+    const minLen = Math.min(prevLen, nextLen);
+    while (start < minLen && prev[start] === next[start]) start++;
+    let endPrev = prevLen;
+    let endNext = nextLen;
+    while (endPrev > start && endNext > start && prev[endPrev - 1] === next[endNext - 1]) {
+      endPrev--;
+      endNext--;
+    }
+    return {
+      pos: start,
+      removeLen: endPrev - start,
+      insert: next.slice(start, endNext),
+    };
+  };
+
+  // 문항 이동 + 네비게이션 추적
+  const navigateTo = useCallback((newIndex) => {
+    if (!sessionInfo?.questions) return;
+    const fromQ = sessionInfo.questions[currentIndex];
+    const toQ = sessionInfo.questions[newIndex];
+    if (fromQ && toQ) trackNavigation(fromQ.id, toQ.id);
+    setCurrentIndex(newIndex);
+  }, [currentIndex, sessionInfo, trackNavigation]);
+
   const debounceSave = useCallback((questionId, data) => {
     clearTimeout(saveTimers.current[questionId]);
     saveTimers.current[questionId] = setTimeout(() => {
@@ -126,19 +212,41 @@ export default function ExamSession() {
   }, []);
 
   const handleTextChange = (questionId, value) => {
+    const prevValue = answersRef.current[questionId]?.answerText || '';
+    // paste 직후 onChange는 KEYSTROKE 중복 방지 (PASTE 이벤트로 별도 기록됨)
+    if (!justPastedRef.current && value !== prevValue) {
+      const diff = computeTextDiff(prevValue, value);
+      if (diff && (diff.removeLen > 0 || diff.insert.length > 0)) {
+        trackEdit(questionId, diff.pos, diff.removeLen, diff.insert);
+        debugLog('text-diff', { questionId, ...diff });
+      }
+    }
+    justPastedRef.current = false;
+
     const data = { answerText: value, selectedChoiceIds: [] };
+    answersRef.current = { ...answersRef.current, [questionId]: data };
     setAnswers((prev) => ({ ...prev, [questionId]: data }));
     debounceSave(questionId, data);
   };
 
+  const handleTextareaPaste = () => {
+    justPastedRef.current = true;
+    // paste가 prevented되거나 onChange가 발생하지 않은 경우 플래그를 안전하게 해제.
+    setTimeout(() => {
+      justPastedRef.current = false;
+    }, 0);
+  };
+
   const handleChoiceToggle = (questionId, choiceId) => {
-    setAnswers((prev) => {
-      const cur = prev[questionId]?.selectedChoiceIds || [];
-      const next = cur.includes(choiceId) ? cur.filter((id) => id !== choiceId) : [...cur, choiceId];
-      const data = { answerText: '', selectedChoiceIds: next };
-      debounceSave(questionId, data);
-      return { ...prev, [questionId]: data };
-    });
+    // StrictMode 대응: setState updater 내부에서 부수효과(trackChoiceChange 등)를 호출하면
+    // dev 모드에서 두 번 실행되어 이벤트가 중복 기록되므로 모든 부수효과는 밖으로 분리한다.
+    const cur = answersRef.current[questionId]?.selectedChoiceIds || [];
+    const next = cur.includes(choiceId) ? cur.filter((id) => id !== choiceId) : [...cur, choiceId];
+    const data = { answerText: '', selectedChoiceIds: next };
+    answersRef.current = { ...answersRef.current, [questionId]: data };
+    trackChoiceChange(questionId, cur, next);
+    debounceSave(questionId, data);
+    setAnswers((prev) => ({ ...prev, [questionId]: data }));
   };
 
   const handleSubmitConfirm = async () => {
@@ -216,7 +324,7 @@ export default function ExamSession() {
                     fontWeight: isActive ? 700 : 400,
                     border: isActive ? '2px solid #1976d2' : answered ? '2px solid #90caf9' : '2px solid transparent',
                   }}
-                  onClick={() => setCurrentIndex(i)}
+                  onClick={() => navigateTo(i)}
                 >
                   {i + 1}
                 </button>
@@ -255,6 +363,7 @@ export default function ExamSession() {
                   placeholder="답안을 입력하세요"
                   value={currentAnswer.answerText}
                   onChange={(e) => handleTextChange(currentQ.id, e.target.value)}
+                  onPaste={handleTextareaPaste}
                 />
               ) : (
                 <div style={styles.choicesArea}>
@@ -286,14 +395,14 @@ export default function ExamSession() {
                 <button
                   style={{ ...styles.navBtn, opacity: currentIndex === 0 ? 0.35 : 1 }}
                   disabled={currentIndex === 0}
-                  onClick={() => setCurrentIndex((i) => i - 1)}
+                  onClick={() => navigateTo(currentIndex - 1)}
                 >
                   ◀ 이전 문항
                 </button>
                 <button
                   style={{ ...styles.navBtn, opacity: currentIndex === questions.length - 1 ? 0.35 : 1 }}
                   disabled={currentIndex === questions.length - 1}
-                  onClick={() => setCurrentIndex((i) => i + 1)}
+                  onClick={() => navigateTo(currentIndex + 1)}
                 >
                   다음 문항 ▶
                 </button>
@@ -305,16 +414,40 @@ export default function ExamSession() {
         </main>
       </div>
 
-      {/* 이탈 감지 경고 오버레이 */}
+      {/* 이탈/부정행위 감지 경고 오버레이 */}
       {showWarning && (
         <div style={styles.overlay}>
           <div style={styles.dialogBox}>
-            <h2 style={{ color: '#e53935', margin: '0 0 8px', fontSize: 22 }}>이탈 감지</h2>
-            <p style={{ color: '#555', margin: '0 0 6px', fontSize: 15 }}>
-              다른 창 전환 또는 전체화면 해제가 감지되었습니다.
-            </p>
+            {lastViolationType === 'copy' ? (
+              <>
+                <h2 style={{ color: '#e53935', margin: '0 0 8px', fontSize: 22 }}>복사 감지</h2>
+                <p style={{ color: '#555', margin: '0 0 6px', fontSize: 15 }}>
+                  Ctrl+C(복사) 사용이 감지되었습니다.
+                </p>
+                <p style={{ color: '#555', margin: '0 0 6px', fontSize: 14 }}>
+                  시험 중 복사는 부정행위로 기록됩니다.
+                </p>
+              </>
+            ) : lastViolationType === 'paste' ? (
+              <>
+                <h2 style={{ color: '#e53935', margin: '0 0 8px', fontSize: 22 }}>붙여넣기 감지</h2>
+                <p style={{ color: '#555', margin: '0 0 6px', fontSize: 15 }}>
+                  Ctrl+V(붙여넣기) 사용이 감지되었습니다.
+                </p>
+                <p style={{ color: '#555', margin: '0 0 6px', fontSize: 14 }}>
+                  시험 중 붙여넣기는 부정행위로 기록됩니다.
+                </p>
+              </>
+            ) : (
+              <>
+                <h2 style={{ color: '#e53935', margin: '0 0 8px', fontSize: 22 }}>이탈 감지</h2>
+                <p style={{ color: '#555', margin: '0 0 6px', fontSize: 15 }}>
+                  다른 창 전환 또는 전체화면 해제가 감지되었습니다.
+                </p>
+              </>
+            )}
             <p style={{ color: '#e53935', fontWeight: 700, margin: '0 0 28px', fontSize: 16 }}>
-              누적 이탈 횟수: {violationCount}회
+              누적 경고 횟수: {violationCount}회
             </p>
             <button style={styles.returnBtn} onClick={dismissWarning}>
               시험으로 돌아가기

@@ -34,6 +34,10 @@ spring:
     locations: classpath:db/migration # V1__sprint1_schema.sql 파일이 위치할 경로
     baseline-on-migrate: true
 
+# 프론트엔드 base URL (감독관 링크 등 외부에 노출되는 절대 URL 조립용)
+app:
+  frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
+
 # JWT 시크릿 키 설정 (임의의 문자열, 실제 운영 시 환경 변수로 주입)
 jwt:
   secret: c3ByaW5nLWJvb3Qtc2VjdXJpdHktand0LXR1dG9yaWFsLXNlY3JldC1rZXktYmFzZTY0LWVuY29kaW5n
