@@ -40,6 +40,7 @@ public enum ErrorCode {
     EXAM_CODE_NOT_FOUND(HttpStatus.NOT_FOUND, "EXAM_CODE_NOT_FOUND", "잘못된 시험 코드입니다."),
     EXAM_NOT_STARTED(HttpStatus.BAD_REQUEST, "EXAM_NOT_STARTED", "시험이 아직 시작되지 않았습니다."),
     EXAM_ENDED(HttpStatus.BAD_REQUEST, "EXAM_ENDED", "시험이 종료되었습니다."),
+    EXAM_NOT_ENDED(HttpStatus.BAD_REQUEST, "EXAM_NOT_ENDED", "시험 종료 시각 이후에만 리포트를 조회할 수 있습니다."),
 
     // 학생 응시 - 명단/세션
     STUDENT_NOT_IN_ROSTER(HttpStatus.FORBIDDEN, "STUDENT_NOT_IN_ROSTER", "응시 권한이 없습니다."),

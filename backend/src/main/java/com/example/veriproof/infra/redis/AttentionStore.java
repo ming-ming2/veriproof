@@ -53,6 +53,29 @@ public class AttentionStore {
         }
     }
 
+    /** * [추가] 재접속 시 이전 점수를 새 UUID로 이관하기 위해 명시적으로 점수를 세팅합니다.
+     */
+    public void setScore(Long examId, UUID sessionUuid, double score, OffsetDateTime examEndsAt) {
+        if (score <= 0) return; // 0점 이하는 굳이 저장할 필요 없음
+        String key = key(examId);
+        try {
+            redis.opsForZSet().add(key, sessionUuid.toString(), score);
+            redis.expireAt(key, examEndsAt.plus(TRAILING_BUFFER).toInstant());
+        } catch (DataAccessException e) {
+            log.warn("AttentionStore.setScore failed examId={}", examId, e);
+        }
+    }
+
+    /** * [추가] 재접속으로 더 이상 쓰지 않는 과거 UUID의 점수 기록을 ZSET에서 삭제합니다.
+     */
+    public void remove(Long examId, UUID sessionUuid) {
+        try {
+            redis.opsForZSet().remove(key(examId), sessionUuid.toString());
+        } catch (DataAccessException e) {
+            log.warn("AttentionStore.remove failed examId={}", examId, e);
+        }
+    }
+
     private String key(Long examId) {
         return "exam:" + examId + ":attention";
     }
