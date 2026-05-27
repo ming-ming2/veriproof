@@ -92,7 +92,7 @@ const {
 | `CHOICE_CHANGE` | `currentSelectedChoiceIds = payload.to`, `choiceChangeHistory`에 `{t, from, to}` push |
 | `QUESTION_NAVIGATE` | 같은 questionId 안에서의 누적 상태에 영향 없음 (필터링은 questionId prop으로 처리) |
 | `VISIBILITY_LOST` / `VISIBILITY_RESTORED` | 답안 상태에 영향 없음. `visibilityGaps`로만 노출. |
-| `FULLSCREEN_EXIT` / `FULLSCREEN_ENTER` | 답안 상태에 영향 없음. (시각화는 백로그 21에서 결정될 수도) |
+| `FULLSCREEN_EXIT` / `FULLSCREEN_ENTER` | 답안 상태에 영향 없음. (시각화는 백로그 20에서 결정될 수도) |
 | `CAPTURE_SHORTCUT`, `WINDOW_BLUR` | 답안 상태에 영향 없음. |
 | `SUSPICIOUS_CHOICE_CHANGE` | `currentSelectedChoiceIds`에는 영향 없음 (원본 CHOICE_CHANGE가 처리). `suspiciousMarkers`에만 추가. |
 

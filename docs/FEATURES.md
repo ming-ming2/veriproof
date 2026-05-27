@@ -138,7 +138,7 @@ VeriProof Sprint 1~3 합의된 기능 명세.
 |---|---|---|
 | `SUSPICIOUS_CHOICE_CHANGE` | `VISIBILITY_RESTORED`/`FULLSCREEN_ENTER` 도착 후 **5초 이내** `CHOICE_CHANGE` 수신 | +1 |
 
-백로그 21 사후 리포트 통계의 "화면 이탈 직후 답 변경 N건"은 `event_type='SUSPICIOUS_CHOICE_CHANGE'` COUNT로 즉시 산출.
+백로그 20 사후 리포트 통계의 "화면 이탈 직후 답 변경 N건"은 `event_type='SUSPICIOUS_CHOICE_CHANGE'` COUNT로 즉시 산출.
 
 ### 5.4 주목도 점수
 

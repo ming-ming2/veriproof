@@ -109,7 +109,7 @@ professor (1) ──< (N) exam (1) ──< (N) question (1) ──< (N) question
 실시간 이벤트 로그 (V4 신규, 백로그 13·14). 학생이 보낸 즉시/배치 이벤트 + 서버 파생 이벤트(`SUSPICIOUS_CHOICE_CHANGE`)를 한 테이블에 누적.
 
 - PK `BIGSERIAL` (학부 스코프 단순성, Kafka 비채택으로 UUID 불필요)
-- `exam_id`는 `exam_session_id`로 도달 가능하지만 **비정규화** — 감독관 이벤트 피드(백로그 18)와 사후 집계(백로그 21)에서 JOIN 회피
+- `exam_id`는 `exam_session_id`로 도달 가능하지만 **비정규화** — 감독관 이벤트 피드(백로그 18)와 사후 집계(백로그 20)에서 JOIN 회피
 - `event_type` VARCHAR(40): 즉시(`PASTE`, `VISIBILITY_LOST`, `VISIBILITY_RESTORED`, `FULLSCREEN_EXIT`, `FULLSCREEN_ENTER`, `CAPTURE_SHORTCUT`, `WINDOW_BLUR`) / 배치(`KEYSTROKE`, `CHOICE_CHANGE`, `QUESTION_NAVIGATE`) / 파생(`SUSPICIOUS_CHOICE_CHANGE`)
 - `occurred_at`: 클라이언트 발생 시각, `received_at`: 서버 수신 시각 (시계 차이 분석용)
 - `duration_ms`: visibility/fullscreen 페어링 결과를 RESTORED/ENTER row에 기록. 미페어링이면 NULL
