@@ -139,6 +139,9 @@ export default function RosterRegister() {
       title: examMeta.title,
       startsAt: toIsoWithOffset(examMeta.startAt),
       endsAt: toIsoWithOffset(examMeta.endAt),
+      ...(examMeta.seatRows && examMeta.seatCols
+        ? { seatRows: examMeta.seatRows, seatCols: examMeta.seatCols }
+        : {}),
       questions: questions.map((q, idx) => {
         const questionType = toQuestionType(q.type);
         const filledChoices =
