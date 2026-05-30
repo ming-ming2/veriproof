@@ -201,6 +201,13 @@ public class StudentSessionService {
 
         session.submit(totalScore);
 
+        // 백로그 24: 주관식 문항이 없으면 자동 채점만으로 채점 완료 처리
+        boolean hasSubjective = exam.getQuestions().stream()
+                .anyMatch(q -> "SUBJECTIVE".equals(q.getQuestionType().name()));
+        session.updateGradingStatus(hasSubjective
+                ? ExamSession.GRADING_UNGRADED
+                : ExamSession.GRADING_COMPLETED);
+
         // 트랜잭션 커밋 후 Redis 정리 (실패가 DB 롤백을 유발하지 않도록)
         Long examId = exam.getId();
         String studentNumber = session.getStudentNumber();

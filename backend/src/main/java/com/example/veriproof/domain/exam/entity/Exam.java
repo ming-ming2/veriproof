@@ -39,6 +39,13 @@ public class Exam extends BaseTimeEntity {
     @Column(name = "ends_at", nullable = false)
     private OffsetDateTime endsAt;
 
+    // 좌석 배치(백로그 25): 둘 다 NULL이면 좌석 배치 미사용
+    @Column(name = "seat_rows")
+    private Integer seatRows;
+
+    @Column(name = "seat_cols")
+    private Integer seatCols;
+
     // Cascade.ALL과 orphanRemoval=true를 통해 Exam 생명주기에 종속시킴
     @OneToMany(mappedBy = "exam", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Question> questions = new ArrayList<>();
@@ -47,13 +54,16 @@ public class Exam extends BaseTimeEntity {
     private List<ExamRoster> rosters = new ArrayList<>();
 
     @Builder
-    public Exam(Professor professor, String title, String examCode, OffsetDateTime startsAt, OffsetDateTime endsAt) {
+    public Exam(Professor professor, String title, String examCode, OffsetDateTime startsAt, OffsetDateTime endsAt,
+                Integer seatRows, Integer seatCols) {
         this.professor = professor;
         this.title = title;
         this.examCode = examCode;
         this.proctorToken = UUID.randomUUID(); // 애플리케이션 레벨에서 UUID 생성
         this.startsAt = startsAt;
         this.endsAt = endsAt;
+        this.seatRows = seatRows;
+        this.seatCols = seatCols;
     }
 
     // --- 연관관계 편의 메서드 ---
@@ -67,9 +77,12 @@ public class Exam extends BaseTimeEntity {
         roster.setExam(this);
     }
 
-    public void update(String title, OffsetDateTime startsAt, OffsetDateTime endsAt) {
+    public void update(String title, OffsetDateTime startsAt, OffsetDateTime endsAt,
+                       Integer seatRows, Integer seatCols) {
         this.title = title;
         this.startsAt = startsAt;
         this.endsAt = endsAt;
+        this.seatRows = seatRows;
+        this.seatCols = seatCols;
     }
 }

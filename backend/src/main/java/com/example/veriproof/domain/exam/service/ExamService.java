@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.security.SecureRandom;
 import java.util.stream.Collectors;
@@ -46,6 +47,8 @@ public class ExamService {
 
         // 2~4. 공통 유효성 검증
         validateExamRequest(request);
+        // 백로그 25: 좌석 설정 유효성 검증 (행/열 페어, 좌석 수 >= 명단 수)
+        validateSeatConfig(request.seatRows(), request.seatCols(), request.roster().size());
 
         // 5. 고유한 6자리 시험 코드 생성
         String examCode = generateUniqueExamCode();
@@ -57,6 +60,8 @@ public class ExamService {
                 .examCode(examCode)
                 .startsAt(request.startsAt())
                 .endsAt(request.endsAt())
+                .seatRows(request.seatRows())
+                .seatCols(request.seatCols())
                 .build();
 
         // 7. 문항(Question) 및 선택지(Choice) 추가 (Entity의 편의 메서드 활용)
@@ -90,6 +95,9 @@ public class ExamService {
                     .build();
             exam.addRoster(roster);
         }
+
+        // 8-1. 백로그 25: 좌석 배치 사용 시 이름순으로 좌석 번호 자동 배정
+        assignSeatNumbers(exam);
 
         // 9. DB 저장 (Cascade 설정에 의해 하위 연관 엔티티도 함께 저장됨)
         Exam savedExam = examRepository.save(exam);
@@ -129,7 +137,9 @@ public class ExamService {
                         exam.getEndsAt(),
                         exam.getQuestions().size(),
                         exam.getRosters().size(),
-                        examSessionRepository.countByExamId(exam.getId())
+                        examSessionRepository.countByExamId(exam.getId()),
+                        examSessionRepository.countByExamIdAndStatusAndGradingStatus(
+                                exam.getId(), ExamSession.STATUS_SUBMITTED, ExamSession.GRADING_UNGRADED)
                 ))
                 .collect(Collectors.toList());
     }
@@ -171,7 +181,8 @@ public class ExamService {
                 .map(r -> new Response.RosterDetailDto(
                         r.getId(),
                         r.getStudentNumber(),
-                        r.getStudentName()
+                        r.getStudentName(),
+                        r.getSeatNumber()
                 ))
                 .collect(Collectors.toList());
 
@@ -183,6 +194,7 @@ public class ExamService {
                         s.getStudentNumber(),
                         s.getStudentName(),
                         s.getStatus(),
+                        s.getGradingStatus(),
                         s.getTotalScore(),
                         s.getStartedAt(),
                         s.getSubmittedAt()
@@ -192,7 +204,7 @@ public class ExamService {
         // 7. 최종 응답 객체 생성
         return new Response.ExamDetailResponse(
                 exam.getId(), exam.getTitle(), exam.getExamCode(), exam.getStartsAt(), exam.getEndsAt(),
-                proctorLink, questionDtos, rosterDtos, sessionDtos
+                proctorLink, exam.getSeatRows(), exam.getSeatCols(), questionDtos, rosterDtos, sessionDtos
         );
     }
 
@@ -211,6 +223,7 @@ public class ExamService {
         }
 
         validateExamRequest(request);
+        validateSeatConfig(request.seatRows(), request.seatCols(), request.roster().size());
 
         // 기존 문항에 첨부된 이미지 파일 경로 수집 (orphanRemoval로 DB 레코드는 삭제되지만,
         // 디스크의 물리 파일은 별도로 정리해야 함)
@@ -221,8 +234,9 @@ public class ExamService {
             }
         }
 
-        // 기본 정보 갱신
-        exam.update(request.title(), request.startsAt(), request.endsAt());
+        // 기본 정보 갱신 (좌석 설정 포함)
+        exam.update(request.title(), request.startsAt(), request.endsAt(),
+                request.seatRows(), request.seatCols());
 
         // 문항/명단 전체 교체 (orphanRemoval=true)
         // clear 직후 flush로 DELETE를 먼저 강제 실행 — 이걸 안 하면
@@ -261,6 +275,9 @@ public class ExamService {
                     .build();
             exam.addRoster(roster);
         }
+
+        // 백로그 25: 좌석 번호 재배정 (명단/좌석 설정 변경 반영)
+        assignSeatNumbers(exam);
 
         // flush 후 더 이상 참조되지 않는 이미지 파일을 디스크에서 제거
         examRepository.flush();
@@ -360,6 +377,85 @@ public class ExamService {
                 session.getSubmittedAt(),
                 answers
         );
+    }
+
+    /**
+     * 백로그 24: 세션 채점 완료 상태 변경. 해당 시험의 교수 본인만 가능.
+     */
+    @Transactional
+    public Response.GradingStatusResponse updateGradingStatus(
+            Long professorId, Long examId, Long sessionId, String gradingStatus) {
+
+        // 1. 허용값 검증
+        if (!ExamSession.GRADING_UNGRADED.equals(gradingStatus)
+                && !ExamSession.GRADING_COMPLETED.equals(gradingStatus)) {
+            throw new CustomException(ErrorCode.INVALID_GRADING_STATUS);
+        }
+
+        // 2. 시험 조회 + 권한 검증
+        Exam exam = examRepository.findById(examId)
+                .orElseThrow(() -> new CustomException(ErrorCode.EXAM_NOT_FOUND));
+        if (!exam.getProfessor().getId().equals(professorId)) {
+            throw new CustomException(ErrorCode.FORBIDDEN);
+        }
+
+        // 3. 세션 조회 + 시험 소속 검증
+        ExamSession session = examSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new CustomException(ErrorCode.SESSION_NOT_FOUND));
+        if (!session.getExam().getId().equals(examId)) {
+            throw new CustomException(ErrorCode.SESSION_NOT_FOUND);
+        }
+
+        // 4. 상태 전이
+        session.updateGradingStatus(gradingStatus);
+
+        return new Response.GradingStatusResponse(session.getId(), session.getGradingStatus());
+    }
+
+    /**
+     * 백로그 25: 좌석 행/열 설정 검증.
+     * - 둘 다 null이면 좌석 배치 미사용 (통과)
+     * - 둘 중 하나만 있으면 INVALID_SEAT_CONFIG
+     * - 좌석 수(행 x 열)가 명단 인원보다 적으면 SEAT_COUNT_INSUFFICIENT
+     */
+    private void validateSeatConfig(Integer seatRows, Integer seatCols, int rosterCount) {
+        boolean rowsPresent = seatRows != null;
+        boolean colsPresent = seatCols != null;
+
+        if (rowsPresent != colsPresent) {
+            throw new CustomException(ErrorCode.INVALID_SEAT_CONFIG);
+        }
+        if (!rowsPresent) {
+            return; // 좌석 배치 미사용
+        }
+        if (seatRows < 1 || seatCols < 1) {
+            throw new CustomException(ErrorCode.INVALID_SEAT_CONFIG);
+        }
+        if (seatRows * seatCols < rosterCount) {
+            throw new CustomException(ErrorCode.SEAT_COUNT_INSUFFICIENT);
+        }
+    }
+
+    /**
+     * 백로그 25: 좌석 배치 사용 시 명단을 이름순으로 정렬해 1번부터 좌석 번호를 배정한다.
+     * 좌석 미사용이면 모든 roster의 seat_number를 null로 초기화한다.
+     */
+    private void assignSeatNumbers(Exam exam) {
+        boolean seatEnabled = exam.getSeatRows() != null && exam.getSeatCols() != null;
+
+        if (!seatEnabled) {
+            exam.getRosters().forEach(r -> r.assignSeatNumber(null));
+            return;
+        }
+
+        List<ExamRoster> sorted = exam.getRosters().stream()
+                .sorted(Comparator.comparing(ExamRoster::getStudentName))
+                .collect(Collectors.toList());
+
+        int seat = 1;
+        for (ExamRoster roster : sorted) {
+            roster.assignSeatNumber(seat++);
+        }
     }
 
     private void validateExamRequest(Request request) {

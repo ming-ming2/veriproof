@@ -89,6 +89,8 @@ public class ProctorService {
                 .endsAt(exam.getEndsAt())
                 .rosterCount(exam.getRosters() != null ? exam.getRosters().size() : 0)
                 .activeCount(activeSessions.size())
+                .seatRows(exam.getSeatRows())
+                .seatCols(exam.getSeatCols())
                 .build();
     }
 
@@ -102,6 +104,14 @@ public class ProctorService {
         List<ActiveSessionInfo> activeInfos = activeSessionStore.getActiveSessionInfos(exam.getId());
         List<ProctorStudentCardResponse> cards = new ArrayList<>();
 
+        // 백로그 25: 학번 → 좌석 번호 매핑 (좌석 미사용이면 모두 null)
+        Map<String, Integer> seatByStudentNumber = exam.getRosters().stream()
+                .filter(r -> r.getSeatNumber() != null)
+                .collect(Collectors.toMap(
+                        com.example.veriproof.domain.exam.entity.ExamRoster::getStudentNumber,
+                        com.example.veriproof.domain.exam.entity.ExamRoster::getSeatNumber,
+                        (a, b) -> a));
+
         for (ActiveSessionInfo info : activeInfos) {
             UUID targetSessionUuid = UUID.fromString(info.sessionUuid());
             double score = attentionStore.getScore(exam.getId(), targetSessionUuid);
@@ -113,6 +123,7 @@ public class ProctorService {
                     .sessionUuid(targetSessionUuid)
                     .studentNumber(info.studentNumber())
                     .studentName(info.studentName())
+                    .seatNumber(seatByStudentNumber.get(info.studentNumber()))
                     .currentQuestionId(info.currentQuestionId())
                     .lastActivityAt(OffsetDateTime.parse(info.lastActivityAt()))
                     .attentionScore(score)

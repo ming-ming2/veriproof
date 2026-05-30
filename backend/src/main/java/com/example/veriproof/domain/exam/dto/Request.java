@@ -16,7 +16,10 @@ public record Request(
         @NotNull OffsetDateTime startsAt,
         @NotNull @Future OffsetDateTime endsAt,
         @NotEmpty @Valid List<QuestionDto> questions,
-        @NotEmpty @Valid List<RosterDto> roster   // 백로그 1-4: 명단 최소 1명 필수
+        @NotEmpty @Valid List<RosterDto> roster,  // 백로그 1-4: 명단 최소 1명 필수
+        // 백로그 25 좌석 배치: 둘 다 없으면 미사용, 둘 중 하나만 있으면 400 INVALID_SEAT_CONFIG
+        @Min(value = 1, message = "좌석 행 수는 1 이상이어야 합니다.") Integer seatRows,
+        @Min(value = 1, message = "좌석 열 수는 1 이상이어야 합니다.") Integer seatCols
 ) {
     public record QuestionDto(
             @NotBlank
@@ -44,5 +47,11 @@ public record Request(
             @NotNull(message = "점수는 필수 입력 항목입니다.")
             @Min(value = 0, message = "점수는 0점 이상이어야 합니다.")
             Integer earnedScore
+    ) {}
+
+    // 백로그 24: 세션 채점 완료 상태 변경
+    public record GradingStatusRequest(
+            @NotBlank(message = "gradingStatus는 필수 입력 항목입니다.")
+            String gradingStatus
     ) {}
 }

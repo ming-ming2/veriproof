@@ -15,6 +15,11 @@ public interface ExamSessionRepository extends JpaRepository<ExamSession, Long> 
     int countByExamId(Long examId);
 
     /**
+     * 백로그 24: 채점 확인 필요 건수. status=SUBMITTED & grading_status=UNGRADED 세션 수.
+     */
+    int countByExamIdAndStatusAndGradingStatus(Long examId, String status, String gradingStatus);
+
+    /**
      * 동일 시험에 동일 학번의 세션 조회. 학생 응시 시작 시 재접속/신규 분기에 사용.
      */
     Optional<ExamSession> findByExamIdAndStudentNumber(Long examId, String studentNumber);

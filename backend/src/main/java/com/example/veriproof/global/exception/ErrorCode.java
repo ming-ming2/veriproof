@@ -36,6 +36,13 @@ public enum ErrorCode {
     // 시험 - 수정/삭제
     EXAM_HAS_SESSIONS(HttpStatus.CONFLICT, "EXAM_HAS_SESSIONS", "이미 응시자가 존재하는 시험은 수정/삭제할 수 없습니다."),
 
+    // 좌석 배치 (백로그 25)
+    INVALID_SEAT_CONFIG(HttpStatus.BAD_REQUEST, "INVALID_SEAT_CONFIG", "좌석 행/열은 둘 다 입력하거나 둘 다 비워야 합니다."),
+    SEAT_COUNT_INSUFFICIENT(HttpStatus.BAD_REQUEST, "SEAT_COUNT_INSUFFICIENT", "좌석 수가 응시 명단 인원보다 적습니다."),
+
+    // 채점 완료 상태 (백로그 24)
+    INVALID_GRADING_STATUS(HttpStatus.BAD_REQUEST, "INVALID_GRADING_STATUS", "허용되지 않는 채점 상태 값입니다."),
+
     // 학생 응시 - 시험 코드 / 시간
     EXAM_CODE_NOT_FOUND(HttpStatus.NOT_FOUND, "EXAM_CODE_NOT_FOUND", "잘못된 시험 코드입니다."),
     EXAM_NOT_STARTED(HttpStatus.BAD_REQUEST, "EXAM_NOT_STARTED", "시험이 아직 시작되지 않았습니다."),

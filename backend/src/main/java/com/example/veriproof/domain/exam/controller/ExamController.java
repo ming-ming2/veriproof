@@ -117,6 +117,21 @@ public class ExamController {
                 examService.getSessionAnswers(professorId, examId, sessionId)));
     }
 
+    @Operation(summary = "채점 완료 상태 변경",
+            description = "교수가 특정 세션의 채점 완료 상태(UNGRADED/COMPLETED)를 변경합니다 (백로그 24).")
+    @PatchMapping("/{examId}/sessions/{sessionId}/grading-status")
+    public ResponseEntity<ApiResponse<Response.GradingStatusResponse>> updateGradingStatus(
+            @AuthenticationPrincipal Long professorId,
+            @PathVariable Long examId,
+            @PathVariable Long sessionId,
+            @RequestBody @Valid Request.GradingStatusRequest request) {
+
+        Response.GradingStatusResponse response = examService.updateGradingStatus(
+                professorId, examId, sessionId, request.gradingStatus());
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
     @Operation(summary = "주관식 채점", description = "교수가 학생의 주관식 답안에 점수를 부여합니다.")
     @PutMapping("/{examId}/sessions/{sessionId}/questions/{questionId}/grade")
     public ResponseEntity<ApiResponse<Void>> gradeAnswer(
