@@ -1,5 +1,6 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { sendInstantEvents } from '../api/exam-session';
+import { enqueue } from '../api/offlineQueue';
 
 export function useExamWebsocket({ sessionToken }) {
   const currentQuestionIdRef = useRef(null);
@@ -13,7 +14,8 @@ export function useExamWebsocket({ sessionToken }) {
       questionId: currentQuestionIdRef.current,
       ...(payload !== undefined ? { payload } : {}),
     };
-    sendInstantEvents(sessionToken, [event]).catch(() => {});
+    // 단절 시 유실되지 않도록 오프라인 큐 경유 (백로그 23)
+    enqueue(() => sendInstantEvents(sessionToken, [event]));
   }, [sessionToken]);
 
   useEffect(() => {

@@ -51,12 +51,14 @@ import java.util.UUID;
 public class EventIngestService {
 
     // 즉시 이벤트 (백로그 13) 허용 타입.
+    // CONNECTION_LOST/RESTORED: 네트워크 단절/복구 마커 (백로그 23). 부정행위 아님 → 점수 미부여.
     static final Set<String> ALLOWED_IMMEDIATE_TYPES = Set.of(
             "PASTE",
             "VISIBILITY_LOST", "VISIBILITY_RESTORED",
             "FULLSCREEN_EXIT", "FULLSCREEN_ENTER",
             "CAPTURE_SHORTCUT",
-            "WINDOW_BLUR"
+            "WINDOW_BLUR",
+            "CONNECTION_LOST", "CONNECTION_RESTORED"
     );
 
     // 배치 이벤트 (백로그 14) 허용 타입. 점수 부여 X (재생용).
@@ -150,11 +152,14 @@ public class EventIngestService {
                 .build());
 
         // 페어링: RESTORED/ENTER이면 가장 가까운 LOST/EXIT을 찾아 duration_ms를 RESTORED/ENTER row에 기록.
+        // CONNECTION_RESTORED도 동일하게 CONNECTION_LOST와 페어링해 단절 지속시간을 기록한다 (백로그 23).
         Integer durationMs = null;
         if ("VISIBILITY_RESTORED".equals(type)) {
             durationMs = recordPair(session.getId(), "VISIBILITY_LOST", saved);
         } else if ("FULLSCREEN_ENTER".equals(type)) {
             durationMs = recordPair(session.getId(), "FULLSCREEN_EXIT", saved);
+        } else if ("CONNECTION_RESTORED".equals(type)) {
+            durationMs = recordPair(session.getId(), "CONNECTION_LOST", saved);
         }
 
         // 점수 갱신

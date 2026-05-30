@@ -1,5 +1,6 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { sendBatchEvents } from '../api/exam-session';
+import { enqueue } from '../api/offlineQueue';
 
 export function useBehaviorTracker({ sessionToken, getAnswers, getQuestions }) {
   const periodStartRef = useRef(new Date().toISOString());
@@ -36,7 +37,13 @@ export function useBehaviorTracker({ sessionToken, getAnswers, getQuestions }) {
     if (!sessionToken) return;
     const payload = buildPayload();
     if (payload.events.length === 0 && payload.snapshots.length === 0) return;
-    try { await sendBatchEvents(sessionToken, payload); } catch {}
+    // 온라인이면 즉시 전송(제출 직전 순서 보장), 실패 시 오프라인 큐에 보관해 재전송 (백로그 23).
+    // buildPayload가 이미 eventsRef를 비웠으므로, 실패해도 payload 객체가 큐에 남아 누락되지 않는다.
+    try {
+      await sendBatchEvents(sessionToken, payload);
+    } catch {
+      enqueue(() => sendBatchEvents(sessionToken, payload));
+    }
   }, [sessionToken, buildPayload]);
 
   // 1분 주기 자동 전송

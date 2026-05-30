@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getSession, saveAnswer, submitExam, sendHeartbeat } from '../api/exam-session';
+import { getSession, saveAnswer, submitExam, sendHeartbeat, sendInstantEvents } from '../api/exam-session';
+import { enqueue, subscribeConnection, setReconnectHandler, resetQueue } from '../api/offlineQueue';
 import { useFullscreen } from '../hooks/useFullscreen';
 import { useExamGuard } from '../hooks/useExamGuard';
 import { useExamWebsocket } from '../hooks/useExamWebsocket';
@@ -55,6 +56,7 @@ export default function ExamSession() {
   const [submitting, setSubmitting] = useState(false);
   const [forcedOut, setForcedOut] = useState(false);
   const [notice, setNotice] = useState(null); // 남은 시간 경고 배너 ('5분 남았습니다' 등)
+  const [online, setOnline] = useState(true);  // 네트워크 연결 상태 (백로그 23)
 
   const saveTimers = useRef({});
   const hasSubmitted = useRef(false);
@@ -78,6 +80,7 @@ export default function ExamSession() {
     hasSubmitted.current = true;
     deactivateRef.current();
     deactivateWsRef.current();
+    resetQueue();
     sessionStorage.removeItem('sessionToken');
     sessionStorage.removeItem('sessionData');
     if (document.fullscreenElement) {
@@ -192,6 +195,23 @@ export default function ExamSession() {
     };
   }, [sessionInfo, doSubmit]);
 
+  // 네트워크 단절/복구 처리 (백로그 23):
+  //  - 연결 상태 구독 → 단절 배너 토글
+  //  - 복구 시 CONNECTION_LOST(단절 시각) + CONNECTION_RESTORED(복구 시각) 마커를 서버로 전송
+  //    → 감독관 대시보드 피드에 단절 구간이 지속시간과 함께 표시됨
+  useEffect(() => {
+    const token = sessionTokenRef.current;
+    if (!token) return;
+    setReconnectHandler(async (offlineSince, restoredAt) => {
+      await sendInstantEvents(token, [
+        { type: 'CONNECTION_LOST', occurredAt: offlineSince || restoredAt },
+        { type: 'CONNECTION_RESTORED', occurredAt: restoredAt },
+      ]);
+    });
+    const unsub = subscribeConnection(({ online: o }) => setOnline(o));
+    return () => { unsub(); };
+  }, []);
+
   // currentIndex 변경 시 WS에 현재 문항 ID 갱신
   useEffect(() => {
     if (!sessionInfo?.questions) return;
@@ -234,7 +254,8 @@ export default function ExamSession() {
   const debounceSave = useCallback((questionId, data) => {
     clearTimeout(saveTimers.current[questionId]);
     saveTimers.current[questionId] = setTimeout(() => {
-      saveAnswer(questionId, data, sessionTokenRef.current).catch(() => {});
+      // 단절 시 유실 방지: 문항별 최신 답안만 큐에 보관(coalesce)했다가 복구 시 재전송 (백로그 23)
+      enqueue(() => saveAnswer(questionId, data, sessionTokenRef.current), `answer:${questionId}`);
     }, 1000);
   }, []);
 
@@ -321,6 +342,13 @@ export default function ExamSession() {
 
   return (
     <div style={styles.container}>
+      {/* 네트워크 단절 배너 (백로그 23) — 단절 동안에도 답안 작성/문항 이동은 계속 가능 */}
+      {!online && (
+        <div style={styles.offlineBanner}>
+          ⚠️ 연결이 끊어졌습니다. 재연결 중… (작성한 답안은 보관되며 복구 시 자동 전송됩니다)
+        </div>
+      )}
+
       {/* 남은 시간 경고 / 종료 안내 배너 (백로그 21) */}
       {notice && <div style={styles.notice}>{notice}</div>}
 
@@ -516,6 +544,12 @@ export default function ExamSession() {
 const styles = {
   container: { display: 'flex', flexDirection: 'column', height: '100vh', background: '#f5f7fa', fontFamily: 'sans-serif', overflow: 'hidden' },
   centerScreen: { height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  offlineBanner: {
+    position: 'fixed', top: 0, left: 0, right: 0,
+    background: '#b71c1c', color: '#fff', padding: '10px 16px',
+    textAlign: 'center', fontWeight: 700, fontSize: 14, zIndex: 3000,
+    boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+  },
   notice: {
     position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)',
     background: '#e53935', color: '#fff', padding: '12px 28px', borderRadius: 8,

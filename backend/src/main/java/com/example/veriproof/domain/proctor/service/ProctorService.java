@@ -55,7 +55,9 @@ public class ProctorService {
             "FULLSCREEN_EXIT", "FULLSCREEN_ENTER",
             "CAPTURE_SHORTCUT",
             "WINDOW_BLUR",
-            "SUSPICIOUS_CHOICE_CHANGE"
+            "SUSPICIOUS_CHOICE_CHANGE",
+            // 백로그 23: 네트워크 단절/복구 마커 (부정행위 아님, 피드에 구간 표시용)
+            "CONNECTION_LOST", "CONNECTION_RESTORED"
     );
 
     /**
@@ -70,7 +72,9 @@ public class ProctorService {
             "WINDOW_BLUR",
             "SUSPICIOUS_CHOICE_CHANGE",
             "CHOICE_CHANGE",
-            "QUESTION_NAVIGATE"
+            "QUESTION_NAVIGATE",
+            // 백로그 23: 학생 상세 패널에도 단절/복구 구간 노출
+            "CONNECTION_LOST", "CONNECTION_RESTORED"
     );
 
     /**
