@@ -260,7 +260,11 @@ export default function ExamCreate() {
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [questions, setQuestions] = useState([createEmptyQuestion()]);
+  const [seatRows, setSeatRows] = useState("");
+  const [seatCols, setSeatCols] = useState("");
   const [validationError, setValidationError] = useState("");
+
+  const totalSeats = seatRows && seatCols ? Number(seatRows) * Number(seatCols) : 0;
 
   // 문항 CRUD
   const addQuestion = () => setQuestions([...questions, createEmptyQuestion()]);
@@ -303,6 +307,8 @@ export default function ExamCreate() {
           title: title.trim(),
           startAt,
           endAt,
+          seatRows: seatRows ? Number(seatRows) : null,
+          seatCols: seatCols ? Number(seatCols) : null,
         },
         questions,
       },
@@ -363,6 +369,49 @@ export default function ExamCreate() {
               />
             </div>
           </div>
+        </section>
+
+        <hr style={styles.divider} />
+
+        {/* 좌석 배치 */}
+        <section style={styles.section}>
+          <div style={styles.sectionHeader}>
+            <h2 style={styles.sectionTitle}>좌석 배치 <span style={{ fontSize: 12, color: "#aaa", fontWeight: 400 }}>(선택)</span></h2>
+          </div>
+          <div style={{ ...styles.row, alignItems: "center", marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={styles.label}>행 수</label>
+              <input
+                type="number"
+                min="1"
+                max="20"
+                placeholder="예: 4"
+                value={seatRows}
+                onChange={(e) => setSeatRows(e.target.value)}
+                style={{ ...styles.input, width: 80 }}
+              />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={styles.label}>열 수</label>
+              <input
+                type="number"
+                min="1"
+                max="20"
+                placeholder="예: 5"
+                value={seatCols}
+                onChange={(e) => setSeatCols(e.target.value)}
+                style={{ ...styles.input, width: 80 }}
+              />
+            </div>
+            {totalSeats > 0 && (
+              <span style={{ fontSize: 13, color: "#555" }}>= 총 {totalSeats}석</span>
+            )}
+          </div>
+          {totalSeats > 0 && (
+            <p style={{ fontSize: 12, color: "#888", margin: 0 }}>
+              응시자 명단이 이름순으로 자동 배치됩니다. 남는 자리는 빈 좌석으로 표시됩니다.
+            </p>
+          )}
         </section>
 
         <hr style={styles.divider} />

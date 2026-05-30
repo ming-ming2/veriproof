@@ -321,7 +321,7 @@ export default function ExamDetail() {
                   <th style={styles.th}>총점</th>
                   <th style={styles.th}>응시 시각</th>
                   <th style={styles.th}>제출 시각</th>
-                  <th style={styles.th}>재생</th>
+                  <th style={styles.th}>액션</th>
                 </tr>
               </thead>
               <tbody>
@@ -329,36 +329,48 @@ export default function ExamDetail() {
                   <tr
                     key={s.sessionUuid}
                     style={styles.sessionRow}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.background = "#fafafa")
-                    }
-                    onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = "transparent")
-                    }
-                    onClick={() =>
-                      navigate(`/exam/${examId}/sessions/${s.id}`)
-                    }
+
                   >
                     <td style={styles.tdMono}>{s.studentNumber}</td>
                     <td style={styles.td}>{s.studentName}</td>
-                    <td style={styles.td}>{sessionStatusLabel(s.status)}</td>
+                    <td style={styles.td}>
+                      <div>{sessionStatusLabel(s.status)}</div>
+                      {s.status === "SUBMITTED" && (
+                        <div style={{ marginTop: 4 }}>
+                          {s.gradingStatus === "COMPLETED" ? (
+                            <span style={styles.gradingDone}>채점 완료</span>
+                          ) : (
+                            <span style={styles.gradingPending}>채점 필요</span>
+                          )}
+                        </div>
+                      )}
+                    </td>
                     <td style={styles.td}>{s.totalScore ?? "-"}</td>
                     <td style={styles.td}>{formatDate(s.startedAt)}</td>
                     <td style={styles.td}>{formatDate(s.submittedAt)}</td>
                     <td style={styles.td}>
                       {s.status === "SUBMITTED" ? (
-                        <button
-                          style={styles.replayBtn}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(
-                              `/exam/${examId}/sessions/${s.id}/replay`
-                            );
-                          }}
-                          title="응시 과정을 시각적으로 재생합니다"
-                        >
-                          ▶ 재생
-                        </button>
+                        <div style={styles.actionBtnGroup}>
+                          <button
+                            style={styles.gradeBtn}
+                            onClick={() =>
+                              navigate(`/exam/${examId}/sessions/${s.id}`)
+                            }
+                          >
+                            ✏ 채점
+                          </button>
+                          <button
+                            style={styles.replayBtn}
+                            onClick={() =>
+                              navigate(
+                                `/exam/${examId}/sessions/${s.id}/replay`
+                              )
+                            }
+                            title="응시 과정을 시각적으로 재생합니다"
+                          >
+                            ▶ 재생
+                          </button>
+                        </div>
                       ) : (
                         <span style={styles.replayDisabled}>—</span>
                       )}
@@ -623,7 +635,18 @@ const styles = {
     borderBottom: "1px solid #f0f0f0",
     fontFamily: '"SF Mono", "Fira Code", monospace',
   },
-  sessionRow: { cursor: "pointer", transition: "background 0.1s" },
+  sessionRow: {},
+  actionBtnGroup: { display: "flex", gap: 6 },
+  gradeBtn: {
+    fontSize: 11,
+    padding: "4px 10px",
+    border: "1px solid #185FA5",
+    borderRadius: 6,
+    background: "#185FA5",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 500,
+  },
   replayBtn: {
     fontSize: 11,
     padding: "4px 10px",
@@ -635,6 +658,8 @@ const styles = {
     fontWeight: 500,
   },
   replayDisabled: { fontSize: 12, color: "#bbb" },
+  gradingDone: { fontSize: 11, fontWeight: 500, padding: "3px 10px", borderRadius: 999, background: "#EAF3DE", color: "#3B6D11" },
+  gradingPending: { fontSize: 11, fontWeight: 500, padding: "3px 10px", borderRadius: 999, background: "#F1EFE8", color: "#888" },
   emptySessionBox: {
     textAlign: "center",
     padding: 24,
