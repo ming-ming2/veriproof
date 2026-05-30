@@ -2,8 +2,11 @@ package com.example.veriproof.domain.exam.repository;
 
 import com.example.veriproof.domain.exam.entity.ExamSession;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -18,6 +21,14 @@ public interface ExamSessionRepository extends JpaRepository<ExamSession, Long> 
      * 백로그 24: 채점 확인 필요 건수. status=SUBMITTED & grading_status=UNGRADED 세션 수.
      */
     int countByExamIdAndStatusAndGradingStatus(Long examId, String status, String gradingStatus);
+
+    /**
+     * 시험 종료 시각이 지났는데 아직 IN_PROGRESS인 세션 id 목록. (백로그 21 자동제출 스위퍼)
+     * id만 조회해 스위퍼가 세션별 개별 트랜잭션으로 재로딩하도록 한다.
+     */
+    @Query("SELECT s.id FROM ExamSession s WHERE s.status = :status AND s.exam.endsAt < :now")
+    List<Long> findIdsByStatusAndExamEndsAtBefore(@Param("status") String status,
+                                                  @Param("now") OffsetDateTime now);
 
     /**
      * 동일 시험에 동일 학번의 세션 조회. 학생 응시 시작 시 재접속/신규 분기에 사용.

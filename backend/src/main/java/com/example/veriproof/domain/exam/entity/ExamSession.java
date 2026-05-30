@@ -56,6 +56,10 @@ public class ExamSession {
     @Column(name = "submitted_at")
     private OffsetDateTime submittedAt;
 
+    /** 타이머 만료/서버 스위퍼에 의한 자동 제출이면 true, 학생 수동 제출이면 false (백로그 21). */
+    @Column(name = "auto_submitted", nullable = false)
+    private boolean autoSubmitted;
+
     @Builder
     public ExamSession(Exam exam, String studentNumber, String studentName) {
         this.sessionUuid = UUID.randomUUID();
@@ -66,6 +70,7 @@ public class ExamSession {
         this.gradingStatus = GRADING_UNGRADED;
         this.totalScore = 0;
         this.startedAt = OffsetDateTime.now();
+        this.autoSubmitted = false;
     }
 
     /**
@@ -78,11 +83,15 @@ public class ExamSession {
 
     /**
      * 학생이 답안을 제출한 시점에 호출. 상태 전이 + 채점 결과 반영.
+     *
+     * @param autoSubmitted 타이머 만료/서버 스위퍼에 의한 자동 제출이면 true (백로그 21).
+     *                      자동/수동 모두 status는 'SUBMITTED'로 전이된다.
      */
-    public void submit(int totalScore) {
+    public void submit(int totalScore, boolean autoSubmitted) {
         this.status = STATUS_SUBMITTED;
         this.submittedAt = OffsetDateTime.now();
         this.totalScore = totalScore;
+        this.autoSubmitted = autoSubmitted;
     }
 
     // 채점결과 변동 시, 총점 변동

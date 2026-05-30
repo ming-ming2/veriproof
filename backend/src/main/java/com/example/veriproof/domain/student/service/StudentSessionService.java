@@ -151,12 +151,7 @@ public class StudentSessionService {
      *
      * 흐름:
      *   1) 세션 검증 (IN_PROGRESS만)
-     *   2) Redis에서 답안 초안 일괄 read
-     *   3) 시험의 모든 문항을 순회하며 SubmissionAnswer + ManyToMany 선택지 row 생성
-     *      - MC: 정답 set과 학생 선택 set이 완전 일치 시 만점, 아니면 0점
-     *      - SUBJECTIVE: 0점 (교수 채점 대기, 백로그 11)
-     *   4) ExamSession.submit(totalScore) — status='SUBMITTED' 전환
-     *   5) 트랜잭션 커밋 후 best-effort로 Redis 초안/lock 정리
+     *   2) {@link #flushGradeAndSubmit} 위임 — 초안 flush + 채점 + 상태 전이 + Redis 정리
      */
     @Transactional
     public StudentResponse.SubmitResponse submit(UUID sessionUuid) {
@@ -166,7 +161,48 @@ public class StudentSessionService {
             throw new CustomException(ErrorCode.SESSION_ALREADY_SUBMITTED);
         }
 
+        flushGradeAndSubmit(session);
+
+        return new StudentResponse.SubmitResponse(
+                session.getSessionUuid().toString(),
+                session.getStatus(),
+                session.getTotalScore(),
+                session.getSubmittedAt(),
+                session.isAutoSubmitted()
+        );
+    }
+
+    /**
+     * 만료 세션 자동 제출. (백로그 21 — 만료 시점 네트워크 단절 대비 서버 폴백)
+     * {@link com.example.veriproof.domain.student.scheduler.AutoSubmitScheduler}가
+     * 세션마다 별도 트랜잭션으로 호출한다.
+     *
+     * 수동 제출이 먼저 커밋되어 이미 SUBMITTED면 조용히 skip — 스위퍼와 수동 제출의 경합을 흡수한다.
+     */
+    @Transactional
+    public void autoSubmitExpiredSession(Long sessionId) {
+        ExamSession session = examSessionRepository.findById(sessionId).orElse(null);
+        if (session == null || !session.isInProgress()) {
+            return;
+        }
+        flushGradeAndSubmit(session);
+    }
+
+    /**
+     * 답안 초안 flush + 자동 채점 + 상태 전이. 수동 제출(백로그 10)과 만료 자동 제출(백로그 21)이 공유.
+     *
+     * 채점 정책:
+     *   - 시험의 모든 문항을 순회하며 SubmissionAnswer + ManyToMany 선택지 row 생성
+     *   - MC: 정답 set과 학생 선택 set이 완전 일치 시 만점, 아니면 0점
+     *   - SUBJECTIVE: 0점 (교수 채점 대기, 백로그 11)
+     *
+     * {@code autoSubmitted}는 제출 시각이 시험 종료 시각 이후인지로 추론한다 —
+     * 타이머 만료 직후 제출과 스위퍼 폴백은 항상 true, 종료 전 수동 제출은 false.
+     * 호출 전 세션이 IN_PROGRESS임을 보장해야 한다.
+     */
+    private void flushGradeAndSubmit(ExamSession session) {
         Exam exam = session.getExam();
+        UUID sessionUuid = session.getSessionUuid();
         Map<Long, AnswerDraft> drafts = answerDraftStore.getAll(sessionUuid);
 
         int totalScore = 0;
@@ -199,7 +235,8 @@ public class StudentSessionService {
             submissionAnswerRepository.save(answer);
         }
 
-        session.submit(totalScore);
+        boolean autoSubmitted = OffsetDateTime.now().isAfter(exam.getEndsAt());
+        session.submit(totalScore, autoSubmitted);
 
         // 백로그 24: 주관식 문항이 없으면 자동 채점만으로 채점 완료 처리
         boolean hasSubjective = exam.getQuestions().stream()
@@ -220,13 +257,6 @@ public class StudentSessionService {
                 }
             });
         }
-
-        return new StudentResponse.SubmitResponse(
-                session.getSessionUuid().toString(),
-                session.getStatus(),
-                session.getTotalScore(),
-                session.getSubmittedAt()
-        );
     }
 
     /**
