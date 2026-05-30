@@ -14,9 +14,7 @@ import com.example.veriproof.domain.student.dto.StudentRequest;
 import com.example.veriproof.domain.student.dto.StudentResponse;
 import com.example.veriproof.global.exception.CustomException;
 import com.example.veriproof.global.exception.ErrorCode;
-import com.example.veriproof.infra.redis.AnswerDraft;
-import com.example.veriproof.infra.redis.AnswerDraftStore;
-import com.example.veriproof.infra.redis.SessionLockStore;
+import com.example.veriproof.infra.redis.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,8 +29,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import com.example.veriproof.infra.redis.ActiveSessionInfo;
-import com.example.veriproof.infra.redis.ActiveSessionStore;
 
 @Service
 @RequiredArgsConstructor
@@ -48,6 +44,7 @@ public class StudentSessionService {
 
     // ActivateSessionStore 추가
     private final ActiveSessionStore activeSessionStore;
+    private final AttentionStore attentionStore; // 🌟 추가 (이름은 실제 클래스명에 맞추세요)
 
 
     /**
@@ -288,7 +285,40 @@ public class StudentSessionService {
                     if (sessionLockStore.isHeld(exam.getId(), existing.getStudentNumber())) {
                         throw new CustomException(ErrorCode.CONCURRENT_SESSION);
                     }
+
+                    // 코드 추가
+                    // 1. 새 UUID 발급 전에 기존 임시 답안(Draft)을 백업합니다.
+                    UUID oldUuid = existing.getSessionUuid();
+                    Map<Long, AnswerDraft> oldDrafts = null;
+                    if (oldUuid != null) {
+                        oldDrafts = answerDraftStore.getAll(oldUuid);
+                    }
+
+                    // 2. 새로운 세션 UUID 발급 (이전 기기 토큰 무효화)
                     existing.regenerateSessionUuid();
+                    UUID newUuid = existing.getSessionUuid();
+
+                    // 3. 기존 답안 데이터를 새 UUID 키값으로 이사시킵니다.
+                    if (oldUuid != null) {
+                        if (oldDrafts != null && !oldDrafts.isEmpty()) {
+                            for (Map.Entry<Long, AnswerDraft> entry : oldDrafts.entrySet()) {
+                                answerDraftStore.save(newUuid, entry.getKey(), entry.getValue(), exam.getEndsAt());
+                            }
+                            answerDraftStore.clear(oldUuid);
+                        }
+
+                        // 주목도 점수 이전
+                        double oldAttentionScore = attentionStore.getScore(exam.getId(), oldUuid);
+                        if (oldAttentionScore > 0) {
+                            // 이전 점수를 새 UUID에 그대로 복사
+                            attentionStore.setScore(exam.getId(), newUuid, oldAttentionScore, exam.getEndsAt());
+                            // ZSET에서 옛날 UUID 삭제
+                            attentionStore.remove(exam.getId(), oldUuid);
+                        }
+
+                        // 감독관 전광판에서 기존 좀비 카드 제거
+                        activeSessionStore.removeActiveSession(exam.getId(), oldUuid.toString());
+                    }
                     return existing;
                 })
                 .orElseGet(() -> examSessionRepository.save(
