@@ -73,6 +73,35 @@ export default function ProctorDashboard() {
     onSessionStatus: handleSessionStatus,
   });
 
+  // 학생 목록 + 메타 3초 폴링 — 새로 입장한 학생/응시 인원 자동 반영
+  // (이벤트·주목도·상태는 SSE로 1초 내 갱신, 목록 자체는 폴링으로 보강)
+  useEffect(() => {
+    if (!token) return;
+    const poll = async () => {
+      try {
+        const [metaRes, studentsRes] = await Promise.all([
+          getExamMeta(token),
+          getStudentList(token),
+        ]);
+        const m = metaRes.data.data;
+        setExamInfo((prev) =>
+          prev
+            ? {
+                ...prev,
+                rosterCount: m.rosterCount,
+                activeCount: m.activeCount,
+                seatRows: m.seatRows ?? null,
+                seatCols: m.seatCols ?? null,
+              }
+            : prev
+        );
+        setStudents(studentsRes.data.data || []);
+      } catch {}
+    };
+    const id = setInterval(poll, 3000);
+    return () => clearInterval(id);
+  }, [token]);
+
   // 학생 상세 패널: 1초 폴링
   useEffect(() => {
     if (!selectedUuid || !token) return;
