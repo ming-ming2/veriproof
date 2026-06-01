@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { getSessionAnswers, gradeSubjective } from "../api/exam";
+import { getSessionAnswers, gradeSubjective, updateGradingStatus } from "../api/exam";
 
 export default function SessionGrade() {
   const navigate = useNavigate();
@@ -81,6 +81,8 @@ export default function SessionGrade() {
           gradeSubjective(examId, sessionId, a.questionId, Number(scoreInputs[a.questionId]))
         )
       );
+      // 백로그 24: 점수 저장 후 세션을 채점 완료(COMPLETED) 처리
+      await updateGradingStatus(examId, sessionId, "COMPLETED");
       await load();
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);

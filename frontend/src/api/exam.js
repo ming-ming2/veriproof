@@ -27,6 +27,13 @@ export const gradeSubjective = (examId, sessionId, questionId, earnedScore) =>
     { earnedScore }
   );
 
+// 세션 채점 완료 상태 변경 (백로그 24)
+export const updateGradingStatus = (examId, sessionId, gradingStatus) =>
+  axiosInstance.patch(
+    `/exams/${examId}/sessions/${sessionId}/grading-status`,
+    { gradingStatus }
+  );
+
 // 종료된 시험 답안 재생 데이터 일괄 조회 (백로그 15)
 export const getReplay = (examId, sessionId) =>
   axiosInstance.get(`/exams/${examId}/sessions/${sessionId}/replay`);

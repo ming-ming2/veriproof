@@ -17,25 +17,6 @@ export default function ProctorDashboard() {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('list'); // list | seating
 
-  // 더미 데이터 (백엔드 seatNumber 연동 전 테스트용)
-  const DUMMY_SEAT_STUDENTS = [
-    { sessionUuid: 'd1', studentNumber: '202094926', studentName: '김나은',   seatNumber: 1,  attentionScore: 0, attentionLevel: 'NORMAL', status: 'IN_PROGRESS', currentQuestionId: 2, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd2', studentNumber: '202322678', studentName: '서다은',   seatNumber: 2,  attentionScore: 2, attentionLevel: 'MID',    status: 'IN_PROGRESS', currentQuestionId: 1, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd3', studentNumber: '202097419', studentName: '서민준',   seatNumber: 3,  attentionScore: 5, attentionLevel: 'HIGH',   status: 'IN_PROGRESS', currentQuestionId: 3, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd4', studentNumber: '201928948', studentName: '신유진',   seatNumber: 4,  attentionScore: 0, attentionLevel: 'NORMAL', status: 'IN_PROGRESS', currentQuestionId: 2, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd5', studentNumber: '202241287', studentName: '신민준',   seatNumber: 5,  attentionScore: 1, attentionLevel: 'LOW',    status: 'IN_PROGRESS', currentQuestionId: 1, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd6', studentNumber: '202116753', studentName: '신태양',   seatNumber: 6,  attentionScore: 0, attentionLevel: 'NORMAL', status: 'SUBMITTED',   currentQuestionId: 3, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd7', studentNumber: '183798000', studentName: '강민서',   seatNumber: 7,  attentionScore: 3, attentionLevel: 'MID',    status: 'IN_PROGRESS', currentQuestionId: 2, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd8', studentNumber: '202235322', studentName: '박지원',   seatNumber: 8,  attentionScore: 0, attentionLevel: 'NORMAL', status: 'IN_PROGRESS', currentQuestionId: 1, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd9', studentNumber: '202116709', studentName: '임예린',   seatNumber: 9,  attentionScore: 4, attentionLevel: 'HIGH',   status: 'IN_PROGRESS', currentQuestionId: 3, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd10', studentNumber: '201913435', studentName: '임준혁',  seatNumber: 10, attentionScore: 0, attentionLevel: 'NORMAL', status: 'IN_PROGRESS', currentQuestionId: 2, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd11', studentNumber: '202214409', studentName: '윤지호',  seatNumber: 11, attentionScore: 1, attentionLevel: 'LOW',    status: 'IN_PROGRESS', currentQuestionId: 1, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd12', studentNumber: '202437349', studentName: '김시우',  seatNumber: 12, attentionScore: 0, attentionLevel: 'NORMAL', status: 'IN_PROGRESS', currentQuestionId: 2, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd13', studentNumber: '201942069', studentName: '정예린',  seatNumber: 13, attentionScore: 2, attentionLevel: 'MID',    status: 'IN_PROGRESS', currentQuestionId: 3, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd14', studentNumber: '202238488', studentName: '조하은',  seatNumber: 14, attentionScore: 0, attentionLevel: 'NORMAL', status: 'IN_PROGRESS', currentQuestionId: 1, lastActivityAt: new Date().toISOString() },
-    { sessionUuid: 'd15', studentNumber: '201928000', studentName: '장재원',  seatNumber: 15, attentionScore: 6, attentionLevel: 'HIGH',   status: 'IN_PROGRESS', currentQuestionId: 2, lastActivityAt: new Date().toISOString() },
-  ];
-
   // 초기 데이터 로드: 시험 메타 + 학생 목록 + 이벤트 피드
   useEffect(() => {
     if (!token) return;
@@ -48,13 +29,11 @@ export default function ProctorDashboard() {
           endsAt: m.endsAt,
           rosterCount: m.rosterCount,
           activeCount: m.activeCount,
-          seatRows: m.seatRows ?? 3,
-          seatCols: m.seatCols ?? 5,
+          // 좌석 미사용 시험이면 null → 배치도 탭이 표시되지 않음 (백로그 25)
+          seatRows: m.seatRows ?? null,
+          seatCols: m.seatCols ?? null,
         });
-        // 백엔드에서 seatNumber 안 내려오면 더미 데이터로 대체
-        const studentsData = studentsRes.data.data || [];
-        const hasSeatData = studentsData.some((s) => s.seatNumber != null);
-        setStudents(hasSeatData ? studentsData : DUMMY_SEAT_STUDENTS);
+        setStudents(studentsRes.data.data || []);
         setFeedEvents(feedRes.data.data?.events || []);
       })
       .catch((err) => {
