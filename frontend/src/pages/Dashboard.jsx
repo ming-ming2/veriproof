@@ -46,9 +46,8 @@ export default function Dashboard() {
   const nextExam = exams
     .filter((e) => getExamStatus(e) === "upcoming")
     .sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt))[0] || null;
-  const needsGradeExams = exams.filter(
-    (e) => getExamStatus(e) === "done" && (e.takerCount || 0) > 0
-  );
+  // 백로그 24: 제출됐으나 채점 미완료(ungradedCount)인 답안 합계 — 시험 상태 무관
+  const ungradedTotal = exams.reduce((sum, e) => sum + (e.ungradedCount || 0), 0);
 
   // 필터링
   const filtered =
@@ -197,13 +196,13 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* 채점 확인 필요 */}
-            <div style={{ ...s.statCard, ...(needsGradeExams.length > 0 ? s.statCardWarn : {}) }}>
-              <p style={{ ...s.statLabel, ...(needsGradeExams.length > 0 ? { color: "#BA7517" } : {}) }}>채점 확인 필요</p>
-              {needsGradeExams.length > 0 ? (
+            {/* 채점 확인 필요 (백로그 24: ungradedCount 기반) */}
+            <div style={{ ...s.statCard, ...(ungradedTotal > 0 ? s.statCardWarn : {}) }}>
+              <p style={{ ...s.statLabel, ...(ungradedTotal > 0 ? { color: "#BA7517" } : {}) }}>채점 확인 필요</p>
+              {ungradedTotal > 0 ? (
                 <>
-                  <p style={{ ...s.statValue, color: "#BA7517", margin: "0 0 2px" }}>{needsGradeExams.length}건</p>
-                  <p style={s.statSub}>응시자 있는 종료 시험</p>
+                  <p style={{ ...s.statValue, color: "#BA7517", margin: "0 0 2px" }}>{ungradedTotal}건</p>
+                  <p style={s.statSub}>미채점 제출 답안</p>
                 </>
               ) : (
                 <p style={s.statSub}>확인 필요 없음</p>
