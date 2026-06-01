@@ -11,6 +11,8 @@ const EVENT_LABEL = {
   SUSPICIOUS_CHOICE_CHANGE: '의심 선택지 변경',
   CHOICE_CHANGE: '선택지 변경',
   QUESTION_NAVIGATE: '문항 이동',
+  CONNECTION_LOST: '연결 끊김',
+  CONNECTION_RESTORED: '연결 복구',
 };
 
 export default function DetailPanel({ student, onClose }) {
