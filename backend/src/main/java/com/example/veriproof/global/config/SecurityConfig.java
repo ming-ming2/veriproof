@@ -49,7 +49,10 @@ public class SecurityConfig {
                                 "/v3/api-docs/**",
                                 "/swagger-resources/**"
                         ).permitAll()
-                        .anyRequest().authenticated()
+                        // API는 인증 보호, 그 외(정적 SPA 리소스 및 라우트)는 모두 공개
+                        // — 올인원 배포에서 Spring Boot가 프론트 정적 파일까지 서빙하기 위함
+                        .requestMatchers("/api/**").authenticated()
+                        .anyRequest().permitAll()
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 

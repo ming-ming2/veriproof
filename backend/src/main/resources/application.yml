@@ -1,12 +1,12 @@
 server:
-  port: 8081 # API Base URL 포트 맞춤, Oracle이 사용중이여서 김경태PC환경에서는 8081포트로 진행
+  port: ${PORT:8081} # 로컬 기본 8081, 배포 플랫폼(Railway/Render 등)이 주입하는 PORT 사용
 
 spring:
-  # 데이터베이스 연결 설정
+  # 데이터베이스 연결 설정 (배포 시 환경 변수로 주입)
   datasource:
-    url: jdbc:postgresql://localhost:5432/veriproof # 로컬 DB 환경에 맞게 수정 필요
-    username: postgres
-    password: oracle
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/veriproof}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:oracle}
     driver-class-name: org.postgresql.Driver
 
   # Redis (응시 활성 lock + 답안 초안 저장)
@@ -14,6 +14,7 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
       timeout: 2s
       connect-timeout: 2s
 
@@ -34,13 +35,22 @@ spring:
     locations: classpath:db/migration # V1__sprint1_schema.sql 파일이 위치할 경로
     baseline-on-migrate: true
 
+# 업로드 파일 저장 경로 (배포 시 영속 볼륨 경로로 덮어쓰기 가능)
+file:
+  upload-dir: ${FILE_UPLOAD_DIR:./uploads/images}
+
 # 프론트엔드 base URL (감독관 링크 등 외부에 노출되는 절대 URL 조립용)
+# 올인원 배포에서는 배포된 앱의 공개 URL을 그대로 주입 (예: https://veriproof.up.railway.app)
 app:
   frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
 
-# JWT 시크릿 키 설정 (임의의 문자열, 실제 운영 시 환경 변수로 주입)
+# CORS 허용 origin (콤마 구분). 올인원 동일 origin 배포에서는 사실상 불필요하나 분리 배포 대비 환경변수화
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+
+# JWT 시크릿 키 설정 (운영 시 반드시 환경 변수로 주입)
 jwt:
-  secret: c3ByaW5nLWJvb3Qtc2VjdXJpdHktand0LXR1dG9yaWFsLXNlY3JldC1rZXktYmFzZTY0LWVuY29kaW5n
+  secret: ${JWT_SECRET:c3ByaW5nLWJvb3Qtc2VjdXJpdHktand0LXR1dG9yaWFsLXNlY3JldC1rZXktYmFzZTY0LWVuY29kaW5n}
 
 springdoc:
   api-docs:
