@@ -19,7 +19,8 @@ public class Response{
             OffsetDateTime endsAt,
             int questionCount,
             int rosterCount,    // 사전 등록된 명단 인원
-            int takerCount      // 실제 응시(세션 생성) 학생 수
+            int takerCount,     // 실제 응시(세션 생성) 학생 수
+            int ungradedCount   // 백로그 24: 제출됐으나 채점 미완료(UNGRADED)인 세션 수
     ) {}
 
     public record ImageUploadResponse(
@@ -36,6 +37,8 @@ public class Response{
             OffsetDateTime startsAt,
             OffsetDateTime endsAt,
             String proctorLink,
+            Integer seatRows,                    // 백로그 25: 좌석 배치 미사용 시 null
+            Integer seatCols,
             List<QuestionDetailDto> questions,
             List<RosterDetailDto> roster,        // 사전 응시 명단 (백로그 1-5 요구)
             List<SessionDetailDto> sessions
@@ -67,7 +70,8 @@ public class Response{
     public record RosterDetailDto(
             Long id,
             String studentNumber,
-            String studentName
+            String studentName,
+            Integer seatNumber       // 백로그 25: 좌석 번호 (1-based), 미사용 시 null
     ) {}
 
     public record SessionDetailDto(
@@ -76,9 +80,16 @@ public class Response{
             String studentNumber,
             String studentName,
             String status,
+            String gradingStatus,           // 백로그 24: UNGRADED | COMPLETED
             Integer totalScore,
             OffsetDateTime startedAt,
             OffsetDateTime submittedAt
+    ) {}
+
+    // 백로그 24: 채점 완료 상태 변경 응답
+    public record GradingStatusResponse(
+            Long sessionId,
+            String gradingStatus
     ) {}
 
     /**

@@ -27,9 +27,19 @@ export const gradeSubjective = (examId, sessionId, questionId, earnedScore) =>
     { earnedScore }
   );
 
+// 세션 채점 완료 상태 변경 (백로그 24)
+export const updateGradingStatus = (examId, sessionId, gradingStatus) =>
+  axiosInstance.patch(
+    `/exams/${examId}/sessions/${sessionId}/grading-status`,
+    { gradingStatus }
+  );
+
 // 종료된 시험 답안 재생 데이터 일괄 조회 (백로그 15)
 export const getReplay = (examId, sessionId) =>
   axiosInstance.get(`/exams/${examId}/sessions/${sessionId}/replay`);
+
+// 사후 리포트 조회 (백로그 20)
+export const getReport = (examId) => axiosInstance.get(`/exams/${examId}/report`);
 
 // 문항 이미지 업로드 (시험 개설 후 문항별 이미지 첨부 시 사용)
 export const uploadQuestionImage = (examId, questionId, file) => {

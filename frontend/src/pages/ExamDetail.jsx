@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getExamDetail, deleteExam } from "../api/exam";
+import ExamReport from "./ExamReport";
 
 export default function ExamDetail() {
   const navigate = useNavigate();
@@ -12,6 +13,7 @@ export default function ExamDetail() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [activeTab, setActiveTab] = useState("detail");
 
   useEffect(() => {
     let cancelled = false;
@@ -126,6 +128,7 @@ export default function ExamDetail() {
 
   // 응시 시작 여부 (수정/삭제 비활성화 조건)
   const hasStartedSessions = exam.sessions && exam.sessions.length > 0;
+  const isExamEnded = new Date(exam.endsAt) < new Date();
 
   return (
     <div style={styles.page}>
@@ -177,199 +180,239 @@ export default function ExamDetail() {
           </div>
         </div>
 
-        {/* 시험 시간 */}
-        <div style={styles.statGrid}>
-          <div style={styles.statCard}>
-            <div style={styles.statLabel}>시작 시각</div>
-            <div style={styles.statValue}>{formatDate(exam.startsAt)}</div>
-          </div>
-          <div style={styles.statCard}>
-            <div style={styles.statLabel}>종료 시각</div>
-            <div style={styles.statValue}>{formatDate(exam.endsAt)}</div>
-          </div>
-          <div style={styles.statCard}>
-            <div style={styles.statLabel}>문항 수</div>
-            <div style={styles.statValueBig}>{exam.questions.length}개</div>
-          </div>
-          <div style={styles.statCard}>
-            <div style={styles.statLabel}>응시 명단</div>
-            <div style={styles.statValueBig}>{exam.roster.length}명</div>
-          </div>
-        </div>
-
-        {/* 시험 코드 */}
-        <div style={styles.sectionLabel}>시험 코드</div>
-        <div style={styles.codeBox}>
-          <span style={styles.codeValue}>{displayCode}</span>
+        {/* 탭 바 */}
+        <div style={styles.tabBar}>
           <button
-            style={styles.copyBtn}
-            onClick={() => copyToClipboard(exam.examCode, setCodeCopied)}
+            style={{
+              ...styles.tab,
+              ...(activeTab === "detail" ? styles.tabActive : {}),
+            }}
+            onClick={() => setActiveTab("detail")}
           >
-            {codeCopied ? "복사됨!" : "복사"}
+            상세
+          </button>
+          <button
+            style={{
+              ...styles.tab,
+              ...(activeTab === "report" ? styles.tabActive : {}),
+              ...(!isExamEnded ? styles.tabDisabled : {}),
+            }}
+            onClick={() => isExamEnded && setActiveTab("report")}
+            title={!isExamEnded ? "시험 종료 후 열람 가능합니다" : ""}
+          >
+            리포트
           </button>
         </div>
 
-        {/* 감독관 링크 */}
-        <div style={styles.sectionLabel}>감독관 링크</div>
-        <div style={styles.linkBox}>
-          <span style={styles.linkValue}>{exam.proctorLink}</span>
-          <button
-            style={styles.copyBtn}
-            onClick={() => copyToClipboard(exam.proctorLink, setLinkCopied)}
-          >
-            {linkCopied ? "복사됨!" : "복사"}
-          </button>
-        </div>
+        {/* 리포트 탭 */}
+        {activeTab === "report" && <ExamReport examId={examId} />}
 
-        {/* 문항 목록 */}
-        <div style={styles.sectionLabel}>문항 목록</div>
-        <div style={styles.questionList}>
-          {exam.questions
-            .slice()
-            .sort((a, b) => a.displayOrder - b.displayOrder)
-            .map((q, idx) => (
-              <div key={q.id} style={styles.questionItem}>
-                <div style={styles.questionItemHeader}>
-                  <span style={styles.questionItemNumber}>문항 {idx + 1}</span>
-                  <span style={styles.questionItemTypeBadge}>
-                    {q.questionType === "MULTIPLE_CHOICE" ? "객관식" : "주관식"}
-                  </span>
-                  <span style={styles.questionItemPoints}>{q.points}점</span>
-                </div>
-                <div style={styles.questionItemBody}>{q.body}</div>
-
-                {q.images && q.images.length > 0 && (
-                  <div style={styles.questionImageRow}>
-                    {q.images.map((img) => (
-                      <img
-                        key={img.id}
-                        src={img.fileUrl}
-                        alt="문항 이미지"
-                        style={styles.questionImage}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {q.questionType === "MULTIPLE_CHOICE" && (
-                  <ul style={styles.choiceList}>
-                    {q.choices
-                      .slice()
-                      .sort((a, b) => a.displayOrder - b.displayOrder)
-                      .map((c) => (
-                        <li
-                          key={c.id}
-                          style={{
-                            ...styles.choiceItem,
-                            ...(c.isCorrect ? styles.choiceItemCorrect : {}),
-                          }}
-                        >
-                          {c.isCorrect ? "✔ " : ""}
-                          {c.body}
-                        </li>
-                      ))}
-                  </ul>
-                )}
-
-                {q.questionType === "SUBJECTIVE" && q.correctAnswer && (
-                  <div style={styles.correctAnswerBox}>
-                    <span style={styles.correctAnswerLabel}>참조용 정답</span>
-                    <span style={styles.correctAnswerText}>
-                      {q.correctAnswer}
-                    </span>
-                  </div>
-                )}
+        {/* 상세 탭 (기존 콘텐츠 그대로) */}
+        {activeTab === "detail" && (
+          <>
+            {/* 시험 시간 */}
+            <div style={styles.statGrid}>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>시작 시각</div>
+                <div style={styles.statValue}>{formatDate(exam.startsAt)}</div>
               </div>
-            ))}
-        </div>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>종료 시각</div>
+                <div style={styles.statValue}>{formatDate(exam.endsAt)}</div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>문항 수</div>
+                <div style={styles.statValueBig}>{exam.questions.length}개</div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>응시 명단</div>
+                <div style={styles.statValueBig}>{exam.roster.length}명</div>
+              </div>
+            </div>
 
-        {/* 응시 명단 */}
-        <div style={styles.sectionLabel}>
-          응시 명단 ({exam.roster.length}명)
-        </div>
-        <div style={styles.tableWrap}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>학번</th>
-                <th style={styles.th}>이름</th>
-              </tr>
-            </thead>
-            <tbody>
-              {exam.roster.map((r) => (
-                <tr key={r.id}>
-                  <td style={styles.tdMono}>{r.studentNumber}</td>
-                  <td style={styles.td}>{r.studentName}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            {/* 시험 코드 */}
+            <div style={styles.sectionLabel}>시험 코드</div>
+            <div style={styles.codeBox}>
+              <span style={styles.codeValue}>{displayCode}</span>
+              <button
+                style={styles.copyBtn}
+                onClick={() => copyToClipboard(exam.examCode, setCodeCopied)}
+              >
+                {codeCopied ? "복사됨!" : "복사"}
+              </button>
+            </div>
 
-        {/* 응시 학생 */}
-        <div style={styles.sectionLabel}>
-          응시 학생 ({exam.sessions.length}명)
-        </div>
-        {exam.sessions.length > 0 ? (
-          <div style={styles.tableWrap}>
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>학번</th>
-                  <th style={styles.th}>이름</th>
-                  <th style={styles.th}>상태</th>
-                  <th style={styles.th}>총점</th>
-                  <th style={styles.th}>응시 시각</th>
-                  <th style={styles.th}>제출 시각</th>
-                  <th style={styles.th}>재생</th>
-                </tr>
-              </thead>
-              <tbody>
-                {exam.sessions.map((s) => (
-                  <tr
-                    key={s.sessionUuid}
-                    style={styles.sessionRow}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.background = "#fafafa")
-                    }
-                    onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = "transparent")
-                    }
-                    onClick={() =>
-                      navigate(`/exam/${examId}/sessions/${s.id}`)
-                    }
-                  >
-                    <td style={styles.tdMono}>{s.studentNumber}</td>
-                    <td style={styles.td}>{s.studentName}</td>
-                    <td style={styles.td}>{sessionStatusLabel(s.status)}</td>
-                    <td style={styles.td}>{s.totalScore ?? "-"}</td>
-                    <td style={styles.td}>{formatDate(s.startedAt)}</td>
-                    <td style={styles.td}>{formatDate(s.submittedAt)}</td>
-                    <td style={styles.td}>
-                      {s.status === "SUBMITTED" ? (
-                        <button
-                          style={styles.replayBtn}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(
-                              `/exam/${examId}/sessions/${s.id}/replay`
-                            );
-                          }}
-                          title="응시 과정을 시각적으로 재생합니다"
-                        >
-                          ▶ 재생
-                        </button>
-                      ) : (
-                        <span style={styles.replayDisabled}>—</span>
-                      )}
-                    </td>
-                  </tr>
+            {/* 감독관 링크 */}
+            <div style={styles.sectionLabel}>감독관 링크</div>
+            <div style={styles.linkBox}>
+              <span style={styles.linkValue}>{exam.proctorLink}</span>
+              <button
+                style={styles.copyBtn}
+                onClick={() => copyToClipboard(exam.proctorLink, setLinkCopied)}
+              >
+                {linkCopied ? "복사됨!" : "복사"}
+              </button>
+            </div>
+
+            {/* 문항 목록 */}
+            <div style={styles.sectionLabel}>문항 목록</div>
+            <div style={styles.questionList}>
+              {exam.questions
+                .slice()
+                .sort((a, b) => a.displayOrder - b.displayOrder)
+                .map((q, idx) => (
+                  <div key={q.id} style={styles.questionItem}>
+                    <div style={styles.questionItemHeader}>
+                      <span style={styles.questionItemNumber}>문항 {idx + 1}</span>
+                      <span style={styles.questionItemTypeBadge}>
+                        {q.questionType === "MULTIPLE_CHOICE" ? "객관식" : "주관식"}
+                      </span>
+                      <span style={styles.questionItemPoints}>{q.points}점</span>
+                    </div>
+                    <div style={styles.questionItemBody}>{q.body}</div>
+
+                    {q.images && q.images.length > 0 && (
+                      <div style={styles.questionImageRow}>
+                        {q.images.map((img) => (
+                          <img
+                            key={img.id}
+                            src={img.fileUrl}
+                            alt="문항 이미지"
+                            style={styles.questionImage}
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                    {q.questionType === "MULTIPLE_CHOICE" && (
+                      <ul style={styles.choiceList}>
+                        {q.choices
+                          .slice()
+                          .sort((a, b) => a.displayOrder - b.displayOrder)
+                          .map((c) => (
+                            <li
+                              key={c.id}
+                              style={{
+                                ...styles.choiceItem,
+                                ...(c.isCorrect ? styles.choiceItemCorrect : {}),
+                              }}
+                            >
+                              {c.isCorrect ? "✔ " : ""}
+                              {c.body}
+                            </li>
+                          ))}
+                      </ul>
+                    )}
+
+                    {q.questionType === "SUBJECTIVE" && q.correctAnswer && (
+                      <div style={styles.correctAnswerBox}>
+                        <span style={styles.correctAnswerLabel}>참조용 정답</span>
+                        <span style={styles.correctAnswerText}>
+                          {q.correctAnswer}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div style={styles.emptySessionBox}>아직 응시한 학생이 없습니다.</div>
+            </div>
+
+            {/* 응시 명단 */}
+            <div style={styles.sectionLabel}>
+              응시 명단 ({exam.roster.length}명)
+            </div>
+            <div style={styles.tableWrap}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>학번</th>
+                    <th style={styles.th}>이름</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {exam.roster.map((r) => (
+                    <tr key={r.id}>
+                      <td style={styles.tdMono}>{r.studentNumber}</td>
+                      <td style={styles.td}>{r.studentName}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 응시 학생 */}
+            <div style={styles.sectionLabel}>
+              응시 학생 ({exam.sessions.length}명)
+            </div>
+            {exam.sessions.length > 0 ? (
+              <div style={styles.tableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>학번</th>
+                      <th style={styles.th}>이름</th>
+                      <th style={styles.th}>상태</th>
+                      <th style={styles.th}>총점</th>
+                      <th style={styles.th}>응시 시각</th>
+                      <th style={styles.th}>제출 시각</th>
+                      <th style={styles.th}>액션</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {exam.sessions.map((s) => (
+                      <tr key={s.sessionUuid} style={styles.sessionRow}>
+                        <td style={styles.tdMono}>{s.studentNumber}</td>
+                        <td style={styles.td}>{s.studentName}</td>
+                        <td style={styles.td}>
+                          <div>{sessionStatusLabel(s.status)}</div>
+                          {s.status === "SUBMITTED" && (
+                            <div style={{ marginTop: 4 }}>
+                              {s.gradingStatus === "COMPLETED" ? (
+                                <span style={styles.gradingDone}>채점 완료</span>
+                              ) : (
+                                <span style={styles.gradingPending}>채점 필요</span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td style={styles.td}>{s.totalScore ?? "-"}</td>
+                        <td style={styles.td}>{formatDate(s.startedAt)}</td>
+                        <td style={styles.td}>{formatDate(s.submittedAt)}</td>
+                        <td style={styles.td}>
+                          {s.status === "SUBMITTED" ? (
+                            <div style={styles.actionBtnGroup}>
+                              <button
+                                style={styles.gradeBtn}
+                                onClick={() =>
+                                  navigate(`/exam/${examId}/sessions/${s.id}`)
+                                }
+                              >
+                                ✏ 채점
+                              </button>
+                              <button
+                                style={styles.replayBtn}
+                                onClick={() =>
+                                  navigate(
+                                    `/exam/${examId}/sessions/${s.id}/replay`
+                                  )
+                                }
+                                title="응시 과정을 시각적으로 재생합니다"
+                              >
+                                ▶ 재생
+                              </button>
+                            </div>
+                          ) : (
+                            <span style={styles.replayDisabled}>—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={styles.emptySessionBox}>아직 응시한 학생이 없습니다.</div>
+            )}
+          </>
         )}
       </div>
 
@@ -472,6 +515,32 @@ const styles = {
     background: "#fff",
     color: "#666",
     cursor: "pointer",
+  },
+
+  // 탭
+  tabBar: {
+    display: "flex",
+    borderBottom: "2px solid #e5e5e5",
+    marginBottom: 24,
+  },
+  tab: {
+    padding: "10px 16px",
+    fontSize: 14,
+    fontWeight: 500,
+    color: "#888",
+    background: "none",
+    border: "none",
+    borderBottom: "2px solid transparent",
+    cursor: "pointer",
+    marginBottom: -2,
+  },
+  tabActive: {
+    color: "#185FA5",
+    borderBottom: "2px solid #185FA5",
+  },
+  tabDisabled: {
+    color: "#ccc",
+    cursor: "not-allowed",
   },
 
   // 통계 카드
@@ -623,7 +692,18 @@ const styles = {
     borderBottom: "1px solid #f0f0f0",
     fontFamily: '"SF Mono", "Fira Code", monospace',
   },
-  sessionRow: { cursor: "pointer", transition: "background 0.1s" },
+  sessionRow: {},
+  actionBtnGroup: { display: "flex", gap: 6 },
+  gradeBtn: {
+    fontSize: 11,
+    padding: "4px 10px",
+    border: "1px solid #185FA5",
+    borderRadius: 6,
+    background: "#185FA5",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 500,
+  },
   replayBtn: {
     fontSize: 11,
     padding: "4px 10px",
@@ -635,6 +715,8 @@ const styles = {
     fontWeight: 500,
   },
   replayDisabled: { fontSize: 12, color: "#bbb" },
+  gradingDone: { fontSize: 11, fontWeight: 500, padding: "3px 10px", borderRadius: 999, background: "#EAF3DE", color: "#3B6D11" },
+  gradingPending: { fontSize: 11, fontWeight: 500, padding: "3px 10px", borderRadius: 999, background: "#F1EFE8", color: "#888" },
   emptySessionBox: {
     textAlign: "center",
     padding: 24,

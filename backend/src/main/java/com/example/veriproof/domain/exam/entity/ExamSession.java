@@ -21,6 +21,9 @@ public class ExamSession {
     public static final String STATUS_SUBMITTED = "SUBMITTED";
     public static final String STATUS_EXPIRED = "EXPIRED";
 
+    public static final String GRADING_UNGRADED = "UNGRADED";
+    public static final String GRADING_COMPLETED = "COMPLETED";
+
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
@@ -40,6 +43,10 @@ public class ExamSession {
     @Column(nullable = false)
     private String status; // 'IN_PROGRESS', 'SUBMITTED', 'EXPIRED'
 
+    // 백로그 24: 세션 단위 채점 완료 상태 ('UNGRADED', 'COMPLETED')
+    @Column(name = "grading_status", nullable = false)
+    private String gradingStatus;
+
     @Column(name = "total_score")
     private Integer totalScore;
 
@@ -49,6 +56,10 @@ public class ExamSession {
     @Column(name = "submitted_at")
     private OffsetDateTime submittedAt;
 
+    /** 타이머 만료/서버 스위퍼에 의한 자동 제출이면 true, 학생 수동 제출이면 false (백로그 21). */
+    @Column(name = "auto_submitted", nullable = false)
+    private boolean autoSubmitted;
+
     @Builder
     public ExamSession(Exam exam, String studentNumber, String studentName) {
         this.sessionUuid = UUID.randomUUID();
@@ -56,8 +67,10 @@ public class ExamSession {
         this.studentNumber = studentNumber;
         this.studentName = studentName;
         this.status = STATUS_IN_PROGRESS;
+        this.gradingStatus = GRADING_UNGRADED;
         this.totalScore = 0;
         this.startedAt = OffsetDateTime.now();
+        this.autoSubmitted = false;
     }
 
     /**
@@ -70,16 +83,25 @@ public class ExamSession {
 
     /**
      * 학생이 답안을 제출한 시점에 호출. 상태 전이 + 채점 결과 반영.
+     *
+     * @param autoSubmitted 타이머 만료/서버 스위퍼에 의한 자동 제출이면 true (백로그 21).
+     *                      자동/수동 모두 status는 'SUBMITTED'로 전이된다.
      */
-    public void submit(int totalScore) {
+    public void submit(int totalScore, boolean autoSubmitted) {
         this.status = STATUS_SUBMITTED;
         this.submittedAt = OffsetDateTime.now();
         this.totalScore = totalScore;
+        this.autoSubmitted = autoSubmitted;
     }
 
     // 채점결과 변동 시, 총점 변동
     public void updateTotalScore(int totalScore) {
         this.totalScore = totalScore;
+    }
+
+    // 백로그 24: 채점 완료 상태 전이
+    public void updateGradingStatus(String gradingStatus) {
+        this.gradingStatus = gradingStatus;
     }
 
     public boolean isInProgress() {

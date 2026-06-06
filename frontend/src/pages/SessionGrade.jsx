@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { getSessionAnswers, gradeSubjective } from "../api/exam";
+import { getSessionAnswers, gradeSubjective, updateGradingStatus } from "../api/exam";
 
 export default function SessionGrade() {
   const navigate = useNavigate();
@@ -9,9 +9,10 @@ export default function SessionGrade() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [scoreInputs, setScoreInputs] = useState({});       // { [questionId]: "20" }
-  const [savingId, setSavingId] = useState(null);
-  const [rowMsg, setRowMsg] = useState({});                 // { [questionId]: "저장됨" | "에러" }
+  const [scoreInputs, setScoreInputs] = useState({});  // { [questionId]: "20" }
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const load = async () => {
     try {
@@ -25,9 +26,7 @@ export default function SessionGrade() {
       });
       setScoreInputs(initial);
     } catch (err) {
-      setError(
-        err.response?.data?.error?.message || "답안을 불러오지 못했습니다."
-      );
+      setError(err.response?.data?.error?.message || "답안을 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
@@ -44,40 +43,53 @@ export default function SessionGrade() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   };
 
-  const handleSave = async (answer) => {
-    const raw = scoreInputs[answer.questionId];
-    const score = Number(raw);
-    if (raw === "" || Number.isNaN(score)) {
-      setRowMsg((m) => ({ ...m, [answer.questionId]: "점수를 입력하세요." }));
+  // 주관식 문항만 추출
+  const subjectiveAnswers = (data?.answers || []).filter(
+    (a) => a.questionType === "SUBJECTIVE"
+  );
+
+  // 유효성 검사
+  const validate = () => {
+    for (const a of subjectiveAnswers) {
+      const raw = scoreInputs[a.questionId];
+      const score = Number(raw);
+      if (raw === "" || Number.isNaN(score)) {
+        return `문항 ${data.answers.indexOf(a) + 1}: 점수를 입력해주세요.`;
+      }
+      if (score < 0 || score > a.points) {
+        return `문항 ${data.answers.indexOf(a) + 1}: 0~${a.points} 사이의 점수를 입력해주세요.`;
+      }
+    }
+    return null;
+  };
+
+  // 전체 저장
+  const handleSaveAll = async () => {
+    setSaveError("");
+    setSaveSuccess(false);
+
+    const validationError = validate();
+    if (validationError) {
+      setSaveError(validationError);
       return;
     }
-    if (score < 0 || score > answer.points) {
-      setRowMsg((m) => ({
-        ...m,
-        [answer.questionId]: `0~${answer.points} 사이여야 합니다.`,
-      }));
-      return;
-    }
-    setSavingId(answer.questionId);
-    setRowMsg((m) => ({ ...m, [answer.questionId]: "" }));
+
+    setSaving(true);
     try {
-      await gradeSubjective(examId, sessionId, answer.questionId, score);
-      // 총점 동기화 위해 다시 로드
+      await Promise.all(
+        subjectiveAnswers.map((a) =>
+          gradeSubjective(examId, sessionId, a.questionId, Number(scoreInputs[a.questionId]))
+        )
+      );
+      // 백로그 24: 점수 저장 후 세션을 채점 완료(COMPLETED) 처리
+      await updateGradingStatus(examId, sessionId, "COMPLETED");
       await load();
-      setRowMsg((m) => ({ ...m, [answer.questionId]: "저장됨" }));
-      setTimeout(() => {
-        setRowMsg((m) => ({ ...m, [answer.questionId]: "" }));
-      }, 1500);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
     } catch (err) {
-      const code = err.response?.data?.error?.code;
-      const message =
-        err.response?.data?.error?.message || "저장에 실패했습니다.";
-      setRowMsg((m) => ({
-        ...m,
-        [answer.questionId]: code ? `[${code}] ${message}` : message,
-      }));
+      setSaveError(err.response?.data?.error?.message || "저장에 실패했습니다.");
     } finally {
-      setSavingId(null);
+      setSaving(false);
     }
   };
 
@@ -212,36 +224,27 @@ export default function SessionGrade() {
                       style={styles.scoreInput}
                     />
                     <span style={styles.maxScore}>/ {a.points}점</span>
-                    <button
-                      type="button"
-                      style={{
-                        ...styles.saveBtn,
-                        opacity: savingId === a.questionId ? 0.5 : 1,
-                      }}
-                      disabled={savingId === a.questionId}
-                      onClick={() => handleSave(a)}
-                    >
-                      {savingId === a.questionId ? "저장 중..." : "저장"}
-                    </button>
-                    {rowMsg[a.questionId] && (
-                      <span
-                        style={{
-                          ...styles.rowMsg,
-                          color:
-                            rowMsg[a.questionId] === "저장됨"
-                              ? "#185FA5"
-                              : "#c0392b",
-                        }}
-                      >
-                        {rowMsg[a.questionId]}
-                      </span>
-                    )}
                   </div>
                 </>
               )}
             </div>
           ))}
         </div>
+
+        {/* 전체 저장 버튼 */}
+        {subjectiveAnswers.length > 0 && (
+          <div style={styles.saveAllRow}>
+            {saveError && <span style={styles.saveErrorMsg}>{saveError}</span>}
+            {saveSuccess && <span style={styles.saveSuccessMsg}>저장됐습니다</span>}
+            <button
+              style={{ ...styles.saveAllBtn, opacity: saving ? 0.6 : 1 }}
+              onClick={handleSaveAll}
+              disabled={saving}
+            >
+              {saving ? "저장 중..." : "채점 저장"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -251,8 +254,7 @@ const styles = {
   page: {
     minHeight: "100vh",
     background: "#f7f7f8",
-    fontFamily:
-      '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
   },
   nav: {
     display: "flex",
@@ -288,135 +290,48 @@ const styles = {
   },
 
   metaRow: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 28 },
-  metaCard: {
-    background: "#fff",
-    border: "1px solid #e5e5e5",
-    borderRadius: 10,
-    padding: "14px 16px",
-  },
+  metaCard: { background: "#fff", border: "1px solid #e5e5e5", borderRadius: 10, padding: "14px 16px" },
   metaLabel: { fontSize: 12, color: "#888", marginBottom: 4 },
   metaValue: { fontSize: 14, fontWeight: 500, color: "#333" },
   metaValueBig: { fontSize: 22, fontWeight: 500, color: "#185FA5" },
 
-  sectionLabel: {
-    fontSize: 13,
-    fontWeight: 500,
-    color: "#555",
-    marginBottom: 10,
-  },
+  sectionLabel: { fontSize: 13, fontWeight: 500, color: "#555", marginBottom: 10 },
   answerList: { display: "flex", flexDirection: "column", gap: 12 },
-  answerCard: {
-    background: "#fff",
-    border: "1px solid #e5e5e5",
-    borderRadius: 10,
-    padding: 16,
-  },
-  answerHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 10,
-  },
+  answerCard: { background: "#fff", border: "1px solid #e5e5e5", borderRadius: 10, padding: 16 },
+  answerHeader: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 },
   qNum: { fontSize: 13, fontWeight: 500, color: "#333" },
-  typeBadge: {
-    fontSize: 11,
-    padding: "2px 8px",
-    borderRadius: 4,
-    background: "#eef4ff",
-    color: "#185FA5",
-  },
-  pointsBadge: {
-    fontSize: 12,
-    color: "#185FA5",
-    marginLeft: "auto",
-    fontWeight: 500,
-  },
-  qBody: {
-    fontSize: 14,
-    color: "#333",
-    whiteSpace: "pre-wrap",
-    marginBottom: 12,
-  },
+  typeBadge: { fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "#eef4ff", color: "#185FA5" },
+  pointsBadge: { fontSize: 12, color: "#185FA5", marginLeft: "auto", fontWeight: 500 },
+  qBody: { fontSize: 14, color: "#333", whiteSpace: "pre-wrap", marginBottom: 12 },
 
   choiceList: { listStyle: "none", padding: 0, margin: 0 },
-  choiceItem: {
-    fontSize: 13,
-    color: "#555",
-    padding: "6px 10px",
-    borderRadius: 6,
-    marginBottom: 4,
-    display: "flex",
-    gap: 8,
-    background: "#fafafa",
-  },
+  choiceItem: { fontSize: 13, color: "#555", padding: "6px 10px", borderRadius: 6, marginBottom: 4, display: "flex", gap: 8, background: "#fafafa" },
   choiceCorrect: { background: "#eef4ff", color: "#185FA5" },
   choiceSelected: { fontWeight: 500, borderLeft: "3px solid #185FA5" },
-  choiceMarks: {
-    minWidth: 40,
-    fontFamily: '"SF Mono", monospace',
-    fontSize: 12,
-  },
-  choiceHint: {
-    fontSize: 11,
-    color: "#aaa",
-    padding: "6px 10px",
-    marginTop: 4,
-  },
+  choiceMarks: { minWidth: 40, fontFamily: '"SF Mono", monospace', fontSize: 12 },
+  choiceHint: { fontSize: 11, color: "#aaa", padding: "6px 10px", marginTop: 4 },
 
-  subFieldLabel: {
-    fontSize: 12,
-    color: "#888",
-    margin: "8px 0 4px",
-    fontWeight: 500,
-  },
-  subAnswerBox: {
-    background: "#fafafa",
-    border: "1px solid #eee",
-    borderRadius: 6,
-    padding: "10px 12px",
-    fontSize: 13,
-    color: "#333",
-    whiteSpace: "pre-wrap",
-    lineHeight: 1.5,
-  },
+  subFieldLabel: { fontSize: 12, color: "#888", margin: "8px 0 4px", fontWeight: 500 },
+  subAnswerBox: { background: "#fafafa", border: "1px solid #eee", borderRadius: 6, padding: "10px 12px", fontSize: 13, color: "#333", whiteSpace: "pre-wrap", lineHeight: 1.5 },
   empty: { color: "#bbb", fontStyle: "italic" },
-  correctAnswerBox: {
-    background: "#eef4ff",
-    border: "1px solid #d0e2f5",
-    borderRadius: 6,
-    padding: "8px 12px",
-    fontSize: 13,
-    color: "#185FA5",
-  },
+  correctAnswerBox: { background: "#eef4ff", border: "1px solid #d0e2f5", borderRadius: 6, padding: "8px 12px", fontSize: 13, color: "#185FA5" },
 
-  gradingRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 14,
-    paddingTop: 12,
-    borderTop: "1px dashed #eee",
-  },
+  gradingRow: { display: "flex", alignItems: "center", gap: 10, marginTop: 14, paddingTop: 12, borderTop: "1px dashed #eee" },
   gradeLabel: { fontSize: 13, fontWeight: 500, color: "#555" },
-  scoreInput: {
-    width: 70,
-    padding: "6px 10px",
-    fontSize: 14,
-    border: "1px solid #ddd",
-    borderRadius: 6,
-    outline: "none",
-    textAlign: "center",
-  },
+  scoreInput: { width: 70, padding: "6px 10px", fontSize: 14, border: "1px solid #ddd", borderRadius: 6, outline: "none", textAlign: "center" },
   maxScore: { fontSize: 13, color: "#888" },
-  saveBtn: {
-    padding: "6px 16px",
-    fontSize: 13,
+
+  saveAllRow: { display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12, marginTop: 24, paddingTop: 20, borderTop: "1px solid #e5e5e5" },
+  saveErrorMsg: { fontSize: 13, color: "#c0392b" },
+  saveSuccessMsg: { fontSize: 13, color: "#185FA5" },
+  saveAllBtn: {
+    padding: "10px 28px",
+    fontSize: 14,
     border: "none",
-    borderRadius: 6,
+    borderRadius: 8,
     background: "#185FA5",
     color: "#fff",
     cursor: "pointer",
     fontWeight: 500,
   },
-  rowMsg: { fontSize: 12, marginLeft: 4 },
 };

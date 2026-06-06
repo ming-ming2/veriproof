@@ -326,6 +326,8 @@ export default function ExamEdit() {
   const [endAt, setEndAt] = useState("");
   const [questions, setQuestions] = useState([]);
   const [roster, setRoster] = useState([]); // 응시 명단
+  const [seatRows, setSeatRows] = useState(""); // 좌석 배치 (백로그 25)
+  const [seatCols, setSeatCols] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -342,6 +344,9 @@ export default function ExamEdit() {
         setTitle(exam.title);
         setStartAt(exam.startsAt?.slice(0, 16) || "");
         setEndAt(exam.endsAt?.slice(0, 16) || "");
+        // 좌석 설정 복원 (백로그 25) — 안 불러오면 수정 시 좌석이 사라짐
+        setSeatRows(exam.seatRows != null ? String(exam.seatRows) : "");
+        setSeatCols(exam.seatCols != null ? String(exam.seatCols) : "");
 
         const formQuestions = exam.questions
           .slice()
@@ -494,6 +499,9 @@ export default function ExamEdit() {
           studentNumber: r.studentNumber,
           studentName: r.studentName,
         })),
+        // 좌석 설정 유지 (백로그 25). 둘 다 비우면 좌석 미사용으로 저장됨.
+        seatRows: seatRows ? Number(seatRows) : null,
+        seatCols: seatCols ? Number(seatCols) : null,
       };
 
       await updateExam(examId, payload);
@@ -576,6 +584,40 @@ export default function ExamEdit() {
                 style={styles.input}
               />
             </div>
+          </div>
+        </section>
+
+        <hr style={styles.divider} />
+
+        {/* 좌석 배치 (백로그 25) */}
+        <section style={styles.section}>
+          <div style={styles.sectionHeader}>
+            <h2 style={styles.sectionTitle}>좌석 배치 <span style={{ fontSize: 12, color: "#aaa", fontWeight: 400 }}>(선택)</span></h2>
+          </div>
+          <div style={{ ...styles.row, alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={styles.label}>행 수</label>
+              <input
+                type="number" min="1" max="20" placeholder="예: 4"
+                value={seatRows}
+                onChange={(e) => setSeatRows(e.target.value)}
+                style={{ ...styles.input, width: 80 }}
+              />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={styles.label}>열 수</label>
+              <input
+                type="number" min="1" max="20" placeholder="예: 5"
+                value={seatCols}
+                onChange={(e) => setSeatCols(e.target.value)}
+                style={{ ...styles.input, width: 80 }}
+              />
+            </div>
+            {seatRows && seatCols && (
+              <span style={{ fontSize: 13, color: "#555" }}>
+                = 총 {Number(seatRows) * Number(seatCols)}석 (명단 {roster.length}명)
+              </span>
+            )}
           </div>
         </section>
 

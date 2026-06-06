@@ -72,11 +72,13 @@ public class StudentResponse {
     /**
      * 제출 완료 응답. 객관식 자동 채점 결과까지 반영된 총점을 포함.
      * 주관식이 포함된 시험에서는 교수 채점 후 총점이 갱신될 수 있다.
+     * {@code autoSubmitted}는 시간 만료 자동 제출 여부 (백로그 21).
      */
     public record SubmitResponse(
             String sessionToken,
             String status,
             Integer totalScore,
-            OffsetDateTime submittedAt
+            OffsetDateTime submittedAt,
+            boolean autoSubmitted
     ) {}
 }

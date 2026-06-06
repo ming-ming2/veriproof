@@ -55,7 +55,9 @@ public class ProctorService {
             "FULLSCREEN_EXIT", "FULLSCREEN_ENTER",
             "CAPTURE_SHORTCUT",
             "WINDOW_BLUR",
-            "SUSPICIOUS_CHOICE_CHANGE"
+            "SUSPICIOUS_CHOICE_CHANGE",
+            // 백로그 23: 네트워크 단절/복구 마커 (부정행위 아님, 피드에 구간 표시용)
+            "CONNECTION_LOST", "CONNECTION_RESTORED"
     );
 
     /**
@@ -70,7 +72,9 @@ public class ProctorService {
             "WINDOW_BLUR",
             "SUSPICIOUS_CHOICE_CHANGE",
             "CHOICE_CHANGE",
-            "QUESTION_NAVIGATE"
+            "QUESTION_NAVIGATE",
+            // 백로그 23: 학생 상세 패널에도 단절/복구 구간 노출
+            "CONNECTION_LOST", "CONNECTION_RESTORED"
     );
 
     /**
@@ -89,6 +93,8 @@ public class ProctorService {
                 .endsAt(exam.getEndsAt())
                 .rosterCount(exam.getRosters() != null ? exam.getRosters().size() : 0)
                 .activeCount(activeSessions.size())
+                .seatRows(exam.getSeatRows())
+                .seatCols(exam.getSeatCols())
                 .build();
     }
 
@@ -102,6 +108,14 @@ public class ProctorService {
         List<ActiveSessionInfo> activeInfos = activeSessionStore.getActiveSessionInfos(exam.getId());
         List<ProctorStudentCardResponse> cards = new ArrayList<>();
 
+        // 백로그 25: 학번 → 좌석 번호 매핑 (좌석 미사용이면 모두 null)
+        Map<String, Integer> seatByStudentNumber = exam.getRosters().stream()
+                .filter(r -> r.getSeatNumber() != null)
+                .collect(Collectors.toMap(
+                        com.example.veriproof.domain.exam.entity.ExamRoster::getStudentNumber,
+                        com.example.veriproof.domain.exam.entity.ExamRoster::getSeatNumber,
+                        (a, b) -> a));
+
         for (ActiveSessionInfo info : activeInfos) {
             UUID targetSessionUuid = UUID.fromString(info.sessionUuid());
             double score = attentionStore.getScore(exam.getId(), targetSessionUuid);
@@ -113,6 +127,7 @@ public class ProctorService {
                     .sessionUuid(targetSessionUuid)
                     .studentNumber(info.studentNumber())
                     .studentName(info.studentName())
+                    .seatNumber(seatByStudentNumber.get(info.studentNumber()))
                     .currentQuestionId(info.currentQuestionId())
                     .lastActivityAt(OffsetDateTime.parse(info.lastActivityAt()))
                     .attentionScore(score)

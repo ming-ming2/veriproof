@@ -14,9 +14,7 @@ import com.example.veriproof.domain.student.dto.StudentRequest;
 import com.example.veriproof.domain.student.dto.StudentResponse;
 import com.example.veriproof.global.exception.CustomException;
 import com.example.veriproof.global.exception.ErrorCode;
-import com.example.veriproof.infra.redis.AnswerDraft;
-import com.example.veriproof.infra.redis.AnswerDraftStore;
-import com.example.veriproof.infra.redis.SessionLockStore;
+import com.example.veriproof.infra.redis.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,8 +29,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import com.example.veriproof.infra.redis.ActiveSessionInfo;
-import com.example.veriproof.infra.redis.ActiveSessionStore;
 
 @Service
 @RequiredArgsConstructor
@@ -48,6 +44,7 @@ public class StudentSessionService {
 
     // ActivateSessionStore 추가
     private final ActiveSessionStore activeSessionStore;
+    private final AttentionStore attentionStore; // 🌟 추가 (이름은 실제 클래스명에 맞추세요)
 
 
     /**
@@ -154,12 +151,7 @@ public class StudentSessionService {
      *
      * 흐름:
      *   1) 세션 검증 (IN_PROGRESS만)
-     *   2) Redis에서 답안 초안 일괄 read
-     *   3) 시험의 모든 문항을 순회하며 SubmissionAnswer + ManyToMany 선택지 row 생성
-     *      - MC: 정답 set과 학생 선택 set이 완전 일치 시 만점, 아니면 0점
-     *      - SUBJECTIVE: 0점 (교수 채점 대기, 백로그 11)
-     *   4) ExamSession.submit(totalScore) — status='SUBMITTED' 전환
-     *   5) 트랜잭션 커밋 후 best-effort로 Redis 초안/lock 정리
+     *   2) {@link #flushGradeAndSubmit} 위임 — 초안 flush + 채점 + 상태 전이 + Redis 정리
      */
     @Transactional
     public StudentResponse.SubmitResponse submit(UUID sessionUuid) {
@@ -169,7 +161,48 @@ public class StudentSessionService {
             throw new CustomException(ErrorCode.SESSION_ALREADY_SUBMITTED);
         }
 
+        flushGradeAndSubmit(session);
+
+        return new StudentResponse.SubmitResponse(
+                session.getSessionUuid().toString(),
+                session.getStatus(),
+                session.getTotalScore(),
+                session.getSubmittedAt(),
+                session.isAutoSubmitted()
+        );
+    }
+
+    /**
+     * 만료 세션 자동 제출. (백로그 21 — 만료 시점 네트워크 단절 대비 서버 폴백)
+     * {@link com.example.veriproof.domain.student.scheduler.AutoSubmitScheduler}가
+     * 세션마다 별도 트랜잭션으로 호출한다.
+     *
+     * 수동 제출이 먼저 커밋되어 이미 SUBMITTED면 조용히 skip — 스위퍼와 수동 제출의 경합을 흡수한다.
+     */
+    @Transactional
+    public void autoSubmitExpiredSession(Long sessionId) {
+        ExamSession session = examSessionRepository.findById(sessionId).orElse(null);
+        if (session == null || !session.isInProgress()) {
+            return;
+        }
+        flushGradeAndSubmit(session);
+    }
+
+    /**
+     * 답안 초안 flush + 자동 채점 + 상태 전이. 수동 제출(백로그 10)과 만료 자동 제출(백로그 21)이 공유.
+     *
+     * 채점 정책:
+     *   - 시험의 모든 문항을 순회하며 SubmissionAnswer + ManyToMany 선택지 row 생성
+     *   - MC: 정답 set과 학생 선택 set이 완전 일치 시 만점, 아니면 0점
+     *   - SUBJECTIVE: 0점 (교수 채점 대기, 백로그 11)
+     *
+     * {@code autoSubmitted}는 제출 시각이 시험 종료 시각 이후인지로 추론한다 —
+     * 타이머 만료 직후 제출과 스위퍼 폴백은 항상 true, 종료 전 수동 제출은 false.
+     * 호출 전 세션이 IN_PROGRESS임을 보장해야 한다.
+     */
+    private void flushGradeAndSubmit(ExamSession session) {
         Exam exam = session.getExam();
+        UUID sessionUuid = session.getSessionUuid();
         Map<Long, AnswerDraft> drafts = answerDraftStore.getAll(sessionUuid);
 
         int totalScore = 0;
@@ -202,7 +235,15 @@ public class StudentSessionService {
             submissionAnswerRepository.save(answer);
         }
 
-        session.submit(totalScore);
+        boolean autoSubmitted = OffsetDateTime.now().isAfter(exam.getEndsAt());
+        session.submit(totalScore, autoSubmitted);
+
+        // 백로그 24: 주관식 문항이 없으면 자동 채점만으로 채점 완료 처리
+        boolean hasSubjective = exam.getQuestions().stream()
+                .anyMatch(q -> "SUBJECTIVE".equals(q.getQuestionType().name()));
+        session.updateGradingStatus(hasSubjective
+                ? ExamSession.GRADING_UNGRADED
+                : ExamSession.GRADING_COMPLETED);
 
         // 트랜잭션 커밋 후 Redis 정리 (실패가 DB 롤백을 유발하지 않도록)
         Long examId = exam.getId();
@@ -216,13 +257,6 @@ public class StudentSessionService {
                 }
             });
         }
-
-        return new StudentResponse.SubmitResponse(
-                session.getSessionUuid().toString(),
-                session.getStatus(),
-                session.getTotalScore(),
-                session.getSubmittedAt()
-        );
     }
 
     /**
@@ -288,7 +322,40 @@ public class StudentSessionService {
                     if (sessionLockStore.isHeld(exam.getId(), existing.getStudentNumber())) {
                         throw new CustomException(ErrorCode.CONCURRENT_SESSION);
                     }
+
+                    // 코드 추가
+                    // 1. 새 UUID 발급 전에 기존 임시 답안(Draft)을 백업합니다.
+                    UUID oldUuid = existing.getSessionUuid();
+                    Map<Long, AnswerDraft> oldDrafts = null;
+                    if (oldUuid != null) {
+                        oldDrafts = answerDraftStore.getAll(oldUuid);
+                    }
+
+                    // 2. 새로운 세션 UUID 발급 (이전 기기 토큰 무효화)
                     existing.regenerateSessionUuid();
+                    UUID newUuid = existing.getSessionUuid();
+
+                    // 3. 기존 답안 데이터를 새 UUID 키값으로 이사시킵니다.
+                    if (oldUuid != null) {
+                        if (oldDrafts != null && !oldDrafts.isEmpty()) {
+                            for (Map.Entry<Long, AnswerDraft> entry : oldDrafts.entrySet()) {
+                                answerDraftStore.save(newUuid, entry.getKey(), entry.getValue(), exam.getEndsAt());
+                            }
+                            answerDraftStore.clear(oldUuid);
+                        }
+
+                        // 주목도 점수 이전
+                        double oldAttentionScore = attentionStore.getScore(exam.getId(), oldUuid);
+                        if (oldAttentionScore > 0) {
+                            // 이전 점수를 새 UUID에 그대로 복사
+                            attentionStore.setScore(exam.getId(), newUuid, oldAttentionScore, exam.getEndsAt());
+                            // ZSET에서 옛날 UUID 삭제
+                            attentionStore.remove(exam.getId(), oldUuid);
+                        }
+
+                        // 감독관 전광판에서 기존 좀비 카드 제거
+                        activeSessionStore.removeActiveSession(exam.getId(), oldUuid.toString());
+                    }
                     return existing;
                 })
                 .orElseGet(() -> examSessionRepository.save(
