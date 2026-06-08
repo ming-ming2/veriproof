@@ -121,6 +121,26 @@ public class EventIngestService {
         }
     }
 
+    /**
+     * 서버 감지 마커: 학생이 탭/브라우저를 닫았다가 재입장한 시점에 기록한다.
+     * 클라이언트 종료 이벤트(언로드 시 유실 가능)에 의존하지 않고 서버에서 확정 기록하므로 누락이 없다.
+     * 네트워크 단절 마커(백로그 23)와 동일하게 부정행위 점수는 부여하지 않는다.
+     */
+    @Transactional
+    public void recordSessionRejoin(ExamSession session) {
+        Exam exam = session.getExam();
+        EventLog saved = eventLogRepository.save(EventLog.builder()
+                .examSession(session)
+                .exam(exam)
+                .eventType("SESSION_REJOIN")
+                .question(null)
+                .occurredAt(OffsetDateTime.now())
+                .payload("{}")
+                .build());
+        broadcaster.publish(exam.getId(),
+                SseEvent.studentEvent(buildStudentEventData(session, saved, null)));
+    }
+
     private ExamSession validateActiveSession(UUID sessionUuid) {
         ExamSession session = examSessionRepository.findBySessionUuid(sessionUuid)
                 .orElseThrow(() -> new CustomException(ErrorCode.SESSION_NOT_FOUND));
