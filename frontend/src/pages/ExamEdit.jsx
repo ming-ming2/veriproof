@@ -2,10 +2,21 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getExamDetail, updateExam } from "../api/exam";
 
-// datetime-local 입력값을 ISO-8601 (UTC)로 변환
+// datetime-local 입력값(로컬 시간)을 ISO-8601 (UTC)로 변환
 const toIsoWithOffset = (localDateTime) => {
   if (!localDateTime) return null;
   return new Date(localDateTime).toISOString();
+};
+
+// 서버의 UTC ISO 시각을 datetime-local 입력값(로컬 벽시계 시간)으로 변환
+// (UTC 문자열을 그대로 slice하면 KST 기준 9시간 빠르게 표시되는 버그 방지)
+const toLocalDateTimeInput = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16);
 };
 
 // ─────────────────────────────────────────────
@@ -342,8 +353,8 @@ export default function ExamEdit() {
         const exam = res.data;
 
         setTitle(exam.title);
-        setStartAt(exam.startsAt?.slice(0, 16) || "");
-        setEndAt(exam.endsAt?.slice(0, 16) || "");
+        setStartAt(toLocalDateTimeInput(exam.startsAt));
+        setEndAt(toLocalDateTimeInput(exam.endsAt));
         // 좌석 설정 복원 (백로그 25) — 안 불러오면 수정 시 좌석이 사라짐
         setSeatRows(exam.seatRows != null ? String(exam.seatRows) : "");
         setSeatCols(exam.seatCols != null ? String(exam.seatCols) : "");

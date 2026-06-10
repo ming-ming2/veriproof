@@ -1,4 +1,5 @@
 import React from 'react';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 const EVENT_LABEL = {
   PASTE: '붙여넣기',
@@ -13,13 +14,17 @@ const EVENT_LABEL = {
   QUESTION_NAVIGATE: '문항 이동',
   CONNECTION_LOST: '연결 끊김',
   CONNECTION_RESTORED: '연결 복구',
+  SESSION_REJOIN: '재입장',
 };
 
 export default function DetailPanel({ student, onClose }) {
+  const isMobile = useIsMobile();
+  const panelStyle = { ...styles.panel, ...(isMobile && { width: '100%', padding: '24px 16px' }) };
+
   if (!student) {
     return (
       <div style={styles.backdrop} onClick={onClose}>
-        <div style={styles.panel} onClick={(e) => e.stopPropagation()}>
+        <div style={panelStyle} onClick={(e) => e.stopPropagation()}>
           <button style={styles.closeBtn} onClick={onClose}>✕</button>
           <p style={{ color: '#999', marginTop: 40, textAlign: 'center' }}>로딩 중...</p>
         </div>

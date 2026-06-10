@@ -1,0 +1,26 @@
+# 빌드 산출물 / 의존성 (이미지 안에서 새로 빌드)
+**/node_modules
+frontend/dist
+backend/build
+backend/.gradle
+
+# 로컬 업로드 / 데이터
+uploads
+infra/storage/*.png
+infra/storage/*.jpg
+
+# IDE / OS
+.idea
+.vscode
+*.iml
+.DS_Store
+Thumbs.db
+
+# git / docs
+.git
+.github
+docs/screenshots
+
+# 로컬 환경설정
+**/.env
+**/.env.local

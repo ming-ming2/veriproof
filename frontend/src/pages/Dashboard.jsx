@@ -76,6 +76,9 @@ export default function Dashboard() {
           { studentNumber: "20240001", studentName: "테스트학생1" },
           { studentNumber: "20240002", studentName: "테스트학생2" },
         ],
+        // 좌석 배치 (백로그 25): 명단 3명 + 빈 좌석이 함께 보이도록 2×3=6석. 감독관 배치도 탭 활성화용
+        seatRows: 2,
+        seatCols: 3,
       };
       const { data: res } = await createExam(payload);
       navigate(`/exam/${res.data.id}`);

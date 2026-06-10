@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { getExamMeta, getStudentList, getStudentDetail, getEventFeed } from '../api/proctor';
 import { useProctorSSE } from '../hooks/useProctorSSE';
+import { useIsMobile } from '../hooks/useIsMobile';
 import StudentCard from '../components/proctor/StudentCard';
 import DetailPanel from '../components/proctor/DetailPanel';
 import EventFeed from '../components/proctor/EventFeed';
@@ -16,6 +17,7 @@ export default function ProctorDashboard() {
   const [detailData, setDetailData] = useState(null);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('list'); // list | seating
+  const isMobile = useIsMobile();
 
   // 초기 데이터 로드: 시험 메타 + 학생 목록 + 이벤트 피드
   useEffect(() => {
@@ -197,14 +199,14 @@ export default function ProctorDashboard() {
   return (
     <div style={styles.container}>
       {/* 헤더 */}
-      <header style={styles.header}>
+      <header style={{ ...styles.header, ...(isMobile && mStyles.header) }}>
         <div style={styles.headerLeft}>
           <h1 style={styles.examTitle}>{examInfo.title}</h1>
           <span style={styles.timeRange}>
             {fmt(examInfo.startsAt)} ~ {fmt(examInfo.endsAt)}
           </span>
         </div>
-        <div style={styles.statRow}>
+        <div style={{ ...styles.statRow, ...(isMobile && mStyles.statRow) }}>
           <StatChip label="명단" value={examInfo.rosterCount} color="#555" />
           <StatChip label="응시" value={examInfo.activeCount} color="#185FA5" />
           {highCount > 0 && (
@@ -219,9 +221,9 @@ export default function ProctorDashboard() {
         </div>
       </header>
 
-      <div style={styles.body}>
+      <div style={{ ...styles.body, ...(isMobile && mStyles.body) }}>
         {/* 학생 그리드 */}
-        <main style={styles.main}>
+        <main style={{ ...styles.main, ...(isMobile && mStyles.main) }}>
           {/* 탭 — 좌석 배치 설정된 경우에만 배치도 탭 표시 */}
           {examInfo.seatRows && examInfo.seatCols && (
             <div style={styles.tabRow}>
@@ -255,7 +257,7 @@ export default function ProctorDashboard() {
                         count={group.students.length}
                         color={group.color}
                       />
-                      <div style={styles.grid}>
+                      <div style={{ ...styles.grid, ...(isMobile && mStyles.grid) }}>
                         {group.students.map((s) => (
                           <StudentCard
                             key={s.sessionUuid}
@@ -275,7 +277,7 @@ export default function ProctorDashboard() {
                     count={submitted.length}
                     color="#bdbdbd"
                   />
-                  <div style={styles.grid}>
+                  <div style={{ ...styles.grid, ...(isMobile && mStyles.grid) }}>
                     {submitted.map((s) => (
                       <StudentCard
                         key={s.sessionUuid}
@@ -302,7 +304,7 @@ export default function ProctorDashboard() {
         </main>
 
         {/* 이벤트 피드 */}
-        <aside style={styles.feedArea}>
+        <aside style={{ ...styles.feedArea, ...(isMobile && mStyles.feedArea) }}>
           <EventFeed events={feedEvents} />
         </aside>
       </div>
@@ -365,8 +367,9 @@ function SeatingMap({ students, seatRows, seatCols, onCardClick }) {
         칠판 / 강단
       </div>
 
-      {/* 좌석 그리드 */}
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${seatCols}, 1fr)`, gap: 8 }}>
+      {/* 좌석 그리드 — 좁은 화면에서는 셀 최소폭을 두고 가로 스크롤 */}
+      <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${seatCols}, minmax(96px, 1fr))`, gap: 8 }}>
         {seats.map((seatNum) => {
           const { row, col } = seatToRowCol(seatNum, seatCols);
           const student = seatMap[seatNum];
@@ -411,6 +414,7 @@ function SeatingMap({ students, seatRows, seatCols, onCardClick }) {
             </div>
           );
         })}
+      </div>
       </div>
     </div>
   );
@@ -478,6 +482,24 @@ const divStyles = {
     fontWeight: 400,
     color: '#aaa',
   },
+};
+
+// 모바일(좁은 화면) 오버라이드 — 인라인 스타일이라 미디어쿼리 대신 런타임 병합
+const mStyles = {
+  header: { padding: '12px 14px', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start' },
+  statRow: { flexWrap: 'wrap' },
+  // 가로 2분할 → 세로 스택: 학생 목록 위, 이벤트 피드 아래
+  body: { flexDirection: 'column' },
+  main: { padding: '14px' },
+  feedArea: {
+    width: 'auto',
+    height: '34vh',
+    flexShrink: 0,
+    borderLeft: 'none',
+    borderTop: '1px solid #e5e5e5',
+    padding: '12px 14px',
+  },
+  grid: { gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' },
 };
 
 const styles = {

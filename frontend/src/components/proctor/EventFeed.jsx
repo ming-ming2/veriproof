@@ -11,6 +11,7 @@ const EVENT_LABEL = {
   SUSPICIOUS_CHOICE_CHANGE: '의심 선택지 변경',
   CONNECTION_LOST: '연결 끊김',
   CONNECTION_RESTORED: '연결 복구',
+  SESSION_REJOIN: '재입장',
 };
 
 // 이벤트 타입별 강조 색상
@@ -23,6 +24,7 @@ const EVENT_COLOR = {
   WINDOW_BLUR: '#757575',
   CONNECTION_LOST: '#d84315',
   CONNECTION_RESTORED: '#2e7d32',
+  SESSION_REJOIN: '#6a1b9a',
 };
 
 function EventFeed({ events }) {

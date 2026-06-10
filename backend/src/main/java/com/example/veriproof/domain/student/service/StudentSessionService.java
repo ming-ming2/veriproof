@@ -10,6 +10,7 @@ import com.example.veriproof.domain.exam.repository.ExamRepository;
 import com.example.veriproof.domain.exam.repository.ExamRosterRepository;
 import com.example.veriproof.domain.exam.repository.ExamSessionRepository;
 import com.example.veriproof.domain.exam.repository.SubmissionAnswerRepository;
+import com.example.veriproof.domain.event.service.EventIngestService;
 import com.example.veriproof.domain.student.dto.StudentRequest;
 import com.example.veriproof.domain.student.dto.StudentResponse;
 import com.example.veriproof.global.exception.CustomException;
@@ -45,6 +46,9 @@ public class StudentSessionService {
     // ActivateSessionStore 추가
     private final ActiveSessionStore activeSessionStore;
     private final AttentionStore attentionStore; // 🌟 추가 (이름은 실제 클래스명에 맞추세요)
+
+    // 탭 닫고 재입장 시 감독관 피드에 마커를 남기기 위한 이벤트 기록기
+    private final EventIngestService eventIngestService;
 
 
     /**
@@ -82,6 +86,12 @@ public class StudentSessionService {
         validateExamWindow(exam);
         validateRoster(exam.getId(), request);
 
+        // 재입장 판정: 제출되지 않은 기존 세션이 있으면 = 탭을 닫았다 다시 들어온 것 (마커용)
+        boolean rejoin = examSessionRepository
+                .findByExamIdAndStudentNumber(exam.getId(), request.studentNumber())
+                .filter(s -> !s.isSubmitted())
+                .isPresent();
+
         ExamSession session = findOrCreateSession(exam, request);
 
         // Redis lock 획득 — 다른 기기가 점유 중이면 차단
@@ -105,6 +115,11 @@ public class StudentSessionService {
                 session.getSessionUuid().toString(),
                 activeInfo
         );
+
+        // 탭 닫고 재입장한 경우 감독관 피드에 마커 기록 (네트워크 단절과 동일, 점수 미부여)
+        if (rejoin) {
+            eventIngestService.recordSessionRejoin(session);
+        }
 
         return buildSessionStartResponse(exam, session);
     }

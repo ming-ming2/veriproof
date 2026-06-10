@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-// 이탈 감지 훅 - visibilitychange(탭 전환/최소화), fullscreenchange(ESC 해제), window blur(ALT+TAB), Ctrl+C/V 감지
+// 이탈 감지 훅 - visibilitychange(탭 전환/최소화), fullscreenchange(ESC 해제), window blur(ALT+TAB), Ctrl/Cmd+C·V 감지
 export function useExamGuard({ requestFullscreen } = {}) {
   const [violationCount, setViolationCount] = useState(0);
   const [showWarning, setShowWarning] = useState(false);
@@ -32,8 +32,11 @@ export function useExamGuard({ requestFullscreen } = {}) {
       handleViolation('blur');
     };
     const handleKeyDown = (e) => {
-      if (e.ctrlKey && e.key === 'c') handleViolation('copy');
-      if (e.ctrlKey && e.key === 'v') handleViolation('paste');
+      // 윈도우(Ctrl)뿐 아니라 맥(Cmd=metaKey)도 감지
+      const mod = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      if (mod && key === 'c') handleViolation('copy');
+      if (mod && key === 'v') handleViolation('paste');
     };
 
     document.addEventListener('visibilitychange', handleVisibility);
